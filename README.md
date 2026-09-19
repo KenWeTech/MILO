@@ -1,5 +1,10 @@
 Sharing a project I use locally that I think might help others. Currently working on a docker image, so will upload everything soon. For now:
 
+<p align="center">
+  <img src="https://github.com/KenWeTech/MILO/blob/main/MILO/public/logo.png?raw=true" alt="MILO Logo" width="400"/>
+</p>
+
+
 # MILO - Music Index & Library Organizer
 
 MILO is a self-hosted music catalog and library organization server that manages access to a master music collection without duplicating audio files.

@@ -536,7 +536,7 @@ The container needs access to the same resources as a source installation:
 │       Host Storage      │
 │                         │
 │  Master Music Collection│
-│  User Libraries         │
+│  User Library Directory │
 │  MILO Database          │
 └────────────┬────────────┘
              │ mounted
@@ -551,11 +551,48 @@ The container needs access to the same resources as a source installation:
 └─────────────────────────┘
 ```
 
-Make sure the master collection and user-library paths are mounted where MILO can access them.
+A Docker deployment should mount the following locations:
 
-If using Advanced Mode, pay particular attention to how the host storage is mounted into the container. Hard links cannot cross filesystems, and container volume mappings can change how those filesystems appear from inside the container.
+* `/app/data` — MILO database and application data
+* `/userdir` — directory where MILO creates and manages user libraries
+* `/music` — master music collection
 
-The SQLite database should also be placed on persistent storage so that recreating or updating the container does not remove the application's database.
+For example:
+
+```yaml
+services:
+  milo:
+    image: ghcr.io/kenwetech/milo:latest
+    container_name: milo
+    restart: unless-stopped
+
+    ports:
+      - "8088:8088"
+
+    env_file:
+      - .env
+
+    volumes:
+      # MILO database and application data
+      - ./data:/app/data
+
+      # User libraries created/managed by MILO
+      - /path/to/user/dir:/userdir
+
+      # Master music collection
+      - /path/to/your/music:/music
+
+    environment:
+      MASTER_POOL_DIR: /music
+```
+
+Replace `/path/to/user/dir` with the host directory where you want MILO to create and manage user libraries. Replace `/path/to/your/music` with the location of your master music collection.
+
+The host directory mapped to `/userdir` can be located wherever you store your MILO user libraries. MILO uses `/userdir` internally, so the host path does not need to match that name.
+
+The `./data:/app/data` mount keeps MILO's SQLite database and application data on persistent storage. This prevents the database from being lost when the container is recreated or updated.
+
+If using Advanced Mode, pay particular attention to how the host storage is mounted into the container. Hard links cannot cross filesystems, and container volume mappings can change how those filesystems appear from inside the container. The master collection and user-library storage must be accessible from compatible filesystems for hard linking to work correctly.
 
 ## Configuration
 
@@ -629,6 +666,41 @@ MILO recursively scans this directory when an administrator performs a master-po
 Each user has their own library path.
 
 These paths determine where MILO creates the user's filesystem library.
+
+For Docker installations, the library path entered in the MILO user-management interface **must start with `/userdir/`**.
+
+For example:
+
+```text
+/userdir/alice
+/userdir/bob
+/userdir/charlie
+```
+
+The `/userdir/` path refers to the directory mapped into the container through the Docker volume configuration. Do not enter the host filesystem path in the MILO interface.
+
+For example, with:
+
+```yaml
+volumes:
+  - /mnt/storage/milo-users:/userdir
+```
+
+the library path entered in MILO should be:
+
+```text
+/userdir/alice
+```
+
+not:
+
+```text
+/mnt/storage/milo-users/alice
+```
+
+This is important for Docker deployments because MILO operates on the filesystem as it appears **inside the container**. Using the host-side path in the MILO interface can cause library creation and linking operations to fail.
+
+For non-Docker installations, use the actual filesystem path accessible to the MILO server.
 
 The library contains links to the master collection rather than independent copies of the audio files.
 

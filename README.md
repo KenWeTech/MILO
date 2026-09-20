@@ -576,6 +576,9 @@ services:
       # MILO database and application data
       - ./data:/app/data
 
+      # Admin library (only if admin wants to create their own)
+      - /path/to/admin/library:/app/Admin_Library
+
       # User libraries created/managed by MILO
       - /path/to/user/dir:/userdir
 
@@ -591,6 +594,8 @@ Replace `/path/to/user/dir` with the host directory where you want MILO to creat
 The host directory mapped to `/userdir` can be located wherever you store your MILO user libraries. MILO uses `/userdir` internally, so the host path does not need to match that name.
 
 The `./data:/app/data` mount keeps MILO's SQLite database and application data on persistent storage. This prevents the database from being lost when the container is recreated or updated.
+
+**Admin Library**: Docker users should not configure `ADMIN_LIBRARY_PATH` in env. MILO defaults the administrator library to `/app/Admin_Library` inside the container. Map that directory to persistent host storage through the Docker Compose file.
 
 If using Advanced Mode, pay particular attention to how the host storage is mounted into the container. Hard links cannot cross filesystems, and container volume mappings can change how those filesystems appear from inside the container. The master collection and user-library storage must be accessible from compatible filesystems for hard linking to work correctly.
 

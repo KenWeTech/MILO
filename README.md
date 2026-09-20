@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/KenWeTech/MILO/blob/main/MILO/public/logo.png?raw=true" alt="MILO Logo" width="300"/>
+  <img src="https://github.com/KenWeTech/MILO/blob/main/MILO/public/assets/logo.png?raw=true" alt="MILO Logo" width="300"/>
 </p>
 
 # **MILO — Music Index & Library Organizer**

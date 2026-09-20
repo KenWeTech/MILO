@@ -42,7 +42,7 @@ const db = new Database(DB_PATH, { timeout: 15000 });
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
-const historyDb = new Database('sync_history.db', { timeout: 15000 });
+const historyDb = new Database(path.join(path.dirname(DB_PATH), 'sync_history.db'), { timeout: 15000 });
 historyDb.pragma('journal_mode = WAL');
 
 function initDb() {

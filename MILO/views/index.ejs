@@ -21,11 +21,11 @@
         <div class="bg-[#000012] p-8 rounded-2xl shadow-2xl w-full max-w-md border border-[#216281]">
             <div class="text-center mb-4 flex flex-col items-center">
                 <div>
-                    <img src="/logo.png" alt="MILO" class="w-30 h-30 object-contain -my-24">
+                    <img src="/asset/logo.png" alt="MILO" class="w-30 h-30 object-contain -my-24">
                 </div>
             </div>
 
-            <h2 class="text-xl font-semibold mb-6 text-[#f1f2f6] text-center">Portal Login</h2>
+            <h2 class="text-xl font-semibold mb-6 text-[#f1f2f6] text-center" id="random-phrase"></h2>
 
             <% if (messages && messages.length > 0) { %>
                 <div class="bg-[#330816]/50 border border-[#66112c] text-[#ff80a8] p-3 rounded-lg mb-6 text-sm text-center">
@@ -47,13 +47,15 @@
         </div>
     </div>
 
+    <script src="/js/login-phrase.js" defer></script>
+
 <% } else { %>
 
     <header class="bg-[#000012] border-b border-[#216281] sticky top-0 z-40">
         <div class="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row justify-between items-center gap-4 relative">
             <div class="flex items-center">
                 <a href="/" class="flex items-center group">
-                    <img src="/logo.png" alt="MILO" class="w-[220px] h-[220px] object-fill block -my-20">
+                    <img src="/asset/logo.png" alt="MILO" class="w-[220px] h-[220px] object-fill block -my-20">
                 </a>
             </div>
             <div class="flex flex-wrap justify-center sm:justify-end items-center gap-2 sm:gap-4 sm:static absolute top-4 right-4">

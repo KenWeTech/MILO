@@ -17,7 +17,7 @@ try { puppeteer = require('puppeteer'); } catch (e) {}
 const app = express();
 
 const SECRET_KEY = process.env.FLASK_SECRET_KEY || 'super-secret-production-key';
-const DB_PATH = process.env.DB_PATH || 'sync_app.db';
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'milo.db');
 const MASTER_POOL_DIR = process.env.MASTER_POOL_DIR || 'C:\\Media\\Music\\MasterPool';
 const SPOTIPY_CLIENT_ID = process.env.SPOTIPY_CLIENT_ID || '';
 const SPOTIPY_CLIENT_SECRET = process.env.SPOTIPY_CLIENT_SECRET || '';

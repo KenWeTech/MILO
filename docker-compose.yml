@@ -1,0 +1,26 @@
+```yaml
+services:
+  milo:
+    image: ghcr.io/kenwetech/milo:latest
+    container_name: milo
+    restart: unless-stopped
+
+    ports:
+      - "8088:8088"
+
+    env_file:
+      - .env
+
+    volumes:
+      # MILO database and application data
+      - ./data:/app/data
+
+      # User libraries created/managed by MILO
+      - /path/to/user/dir:/userdir
+
+      # Master music collection
+      - /path/to/your/music:/music
+
+    environment:
+      MASTER_POOL_DIR: /music
+```

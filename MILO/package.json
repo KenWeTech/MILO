@@ -1,6 +1,6 @@
 {
   "name": "MILO",
-  "version": "1.0.0",
+  "version": "0.9.0",
   "description": "MILO is a self-hosted music catalog and library organization server that manages access to a master music collection without duplicating audio files.",
   "main": "server.js",
   "scripts": {

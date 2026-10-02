@@ -1,4 +1,4 @@
-const CACHE_NAME = 'milo-pwa-v2';
+const CACHE_NAME = 'milo-pwa-v3';
 const PRECACHE_ASSETS = [
   '/offline.html',
   '/assets/logo.png',
@@ -8,76 +8,70 @@ const PRECACHE_ASSETS = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(async (cache) => {
-      await cache.addAll(PRECACHE_ASSETS);
-
-      try {
-        const twReq = new Request('https://cdn.tailwindcss.com', { mode: 'no-cors' });
-        const twRes = await fetch(twReq);
-        if (twRes) await cache.put(twReq, twRes);
-      } catch (e) {
-        console.warn('Tailwind precache skipped.', e);
-      }
-    }).then(() => self.skipWaiting())
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(PRECACHE_ASSETS))
+      .then(() => self.skipWaiting())
   );
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cache) => {
-          if (cache !== CACHE_NAME) {
-            return caches.delete(cache);
-          }
-        })
-      );
-    }).then(() => self.clients.claim())
+    caches.keys()
+      .then((cacheNames) =>
+        Promise.all(
+          cacheNames
+            .filter((name) => name !== CACHE_NAME)
+            .map((name) => caches.delete(name))
+        )
+      )
+      .then(() => self.clients.claim())
   );
 });
 
 self.addEventListener('fetch', (event) => {
   const { request } = event;
 
-  if (request.method !== 'GET' && request.method !== 'HEAD') return;
+  if (request.method !== 'GET') return;
+
+  const url = new URL(request.url);
 
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request)
-        .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-          return response;
-        })
-        .catch(() => {
-          return caches.match('/offline.html');
-        })
+      fetch(request).catch(() => caches.match('/offline.html'))
     );
     return;
   }
 
-  if (request.url.includes('/api/')) {
+  if (url.pathname.startsWith('/api/')) {
     event.respondWith(
-      fetch(request).catch(() => {
-        return new Response(
+      fetch(request).catch(() => 
+        new Response(
           JSON.stringify({ error: 'Network unavailable', offline: true }),
           { status: 503, headers: { 'Content-Type': 'application/json' } }
-        );
-      })
+        )
+      )
     );
     return;
   }
 
   event.respondWith(
     caches.match(request).then((cachedResponse) => {
-      const fetchPromise = fetch(request).then((networkResponse) => {
-        if (networkResponse && (networkResponse.status === 200 || networkResponse.type === 'opaque')) {
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, networkResponse.clone()));
-        }
-        return networkResponse;
-      });
 
-      return cachedResponse || fetchPromise.catch(() => new Response('Offline', { status: 503 }));
+      const fetchPromise = fetch(request)
+        .then((networkResponse) => {
+          if (networkResponse && (networkResponse.status === 200 || networkResponse.type === 'opaque')) {
+            const responseToCache = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, responseToCache));
+          }
+          return networkResponse;
+        })
+        .catch(() => {
+
+          if (cachedResponse) return;
+          return new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } });
+        });
+
+      return cachedResponse || fetchPromise;
     })
   );
 });

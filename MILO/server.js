@@ -1,6 +1,8 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+const http = require('http');
+const bonjour = require('bonjour')();
 const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcrypt');
@@ -16,6 +18,7 @@ try { puppeteer = require('puppeteer'); } catch (e) {}
 
 const app = express();
 
+const PORT = process.env.PORT || 8088;
 const SECRET_KEY = process.env.FLASK_SECRET_KEY || 'super-secret-production-key';
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'milo.db');
 const MASTER_POOL_DIR = process.env.MASTER_POOL_DIR || 'C:\\Media\\Music\\MasterPool';
@@ -1426,7 +1429,7 @@ function runBackgroundScheduler() {
             if (masterInterval > 0 && (now - lastMasterScan >= masterInterval)) {
                 if (activeScanJob.status === 'idle' || activeScanJob.status === 'completed' || activeScanJob.status === 'error') {
                     db.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('last_master_scan', ?)").run(now);
-                    axios.post('http://localhost:8088/api/catalog/scan', {}, {
+                    axios.post(`http://localhost:${PORT}/api/catalog/scan`, {}, {
                         headers: { 'Cookie': `connect.sid=scheduler` } 
                     }).catch(()=>{}); 
 
@@ -1477,7 +1480,69 @@ function runBackgroundScheduler() {
     }, 60000);
 }
 
-app.listen(8088, '0.0.0.0', () => {
-    console.log("Server running on http://0.0.0.0:8088");
-    runBackgroundScheduler();
+let serverInstance;
+
+async function startServer() {
+    try {
+        serverInstance = http.createServer(app).listen(PORT, '0.0.0.0', () => {
+            console.log(`HTTP server running on port ${PORT}`);
+            if (process.send) {
+                process.send('server-ready');
+            }
+            runBackgroundScheduler();
+
+            try {
+                const service = bonjour.publish({
+                    name: 'MILO Web Server',
+                    type: 'http',
+                    port: PORT,
+                    protocol: 'tcp',
+                    host: 'milo.local'
+                });
+
+                service.on('up', () => {
+                    console.log(`[mDNS] HTTP service 'MILO Web Server' is up and discoverable at http://milo.local:${PORT}`);
+                });
+
+                service.on('error', (err) => {
+                    console.error(`[mDNS Error] Failed to publish HTTP service: ${err.message}`);
+                });
+            } catch (e) {
+                console.error(`[mDNS Error] Exception while trying to publish HTTP service: ${e.message}`);
+            }
+        });
+    } catch (error) {
+        console.error('Failed to start the server:', error);
+        process.exit(1);
+    }
+}
+
+startServer();
+
+process.on('SIGTERM', () => {
+    console.log('[Server Shutdown] Stopping mDNS service...');
+    bonjour.unpublishAll();
+    bonjour.destroy();
+    if (serverInstance) {
+        serverInstance.close(() => {
+            console.log('Server closed.');
+            process.exit(0);
+        });
+    } else {
+        process.exit(0);
+    }
+});
+
+process.on('SIGINT', () => {
+    console.log('[Server Shutdown] Stopping mDNS service...');
+    bonjour.unpublishAll();
+    bonjour.destroy();
+    if (serverInstance) {
+        serverInstance.close(() => {
+            console.log('Server closed.');
+            process.exit(0);
+        });
+    } else {
+        process.exit(0);
+    }
 });

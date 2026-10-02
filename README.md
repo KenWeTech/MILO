@@ -53,6 +53,8 @@ This makes it possible for multiple users to have different libraries while the 
 * **Failed match tracking** — Tracks that cannot be confidently matched are recorded for review.
 * **Multiple playlist sources** — Import playlists from Spotify, YouTube Music, Apple Music, or plain text.
 * **Self-hosted** — MILO is designed to run against a music collection you control.
+* **Progressive Web App (PWA) Support** — Install MILO on your supported devices to use it seamlessly as a native-like application.
+* **mDNS Support** — Easily access your MILO instance over your local network using ⁠`milo.local⁠` without needing to memorize IP addresses.
 
 ## Why MILO?
 
@@ -513,9 +515,12 @@ MILO can be run directly from source with Node.js/npm or deployed using the prov
 
 ### Run From Source
 
+Download the latest source `⁠MILO-vX.X.X.zip`⁠ archive from the [**Releases**](https://github.com/KenWeTech/MILO/releases) section and extract the contents of the zip file.
+
 Install the project's dependencies and start MILO with:
 
 ```bash
+npm install
 npm start
 ```
 
@@ -524,6 +529,8 @@ The server listens on:
 ```text
 http://0.0.0.0:8088
 ```
+
+If your network supports mDNS, you can also easily access your running instance by navigating to ⁠`http://milo.local:8088`⁠ in your browser.
 
 ### Docker
 
@@ -598,6 +605,8 @@ The `./data:/app/data` mount keeps MILO's SQLite database and application data o
 **Admin Library**: Docker users should not configure `ADMIN_LIBRARY_PATH` in env. MILO defaults the administrator library to `/app/Admin_Library` inside the container. Map that directory to persistent host storage through the Docker Compose file.
 
 If using Advanced Mode, pay particular attention to how the host storage is mounted into the container. Hard links cannot cross filesystems, and container volume mappings can change how those filesystems appear from inside the container. The master collection and user-library storage must be accessible from compatible filesystems for hard linking to work correctly.
+
+Once deployed via Docker, you can access the MILO interface via your host's IP address on port 8088, or using `⁠http://milo.local:8088`⁠ if your network environment supports mDNS broadcasting.
 
 ## Configuration
 

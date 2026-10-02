@@ -210,7 +210,7 @@
         dotEl.style.background = "#00BBFC";
 
         try {
-            const response = await fetch('/?milo-reconnect=' + Date.now(), {
+            const response = await fetch('/?ping=' + Date.now(), {
                 method: 'HEAD',
                 cache: 'no-store'
             });

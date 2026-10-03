@@ -288,7 +288,7 @@
 
             <div id="alert-actions-error" class="hidden flex-col-reverse sm:flex-row justify-center gap-3 w-full">
                 <button onclick="closeAppAlert()" class="w-full sm:w-auto px-5 py-2.5 bg-[#1d202f] hover:bg-[#2a2e43] border border-[#2a2e43] text-[#f1f2f6] rounded-lg text-sm font-medium transition-colors">Dismiss</button>
-                <button onclick="forceRefreshCheck()" id="btn-force-refresh" class="w-full sm:w-auto px-5 py-2.5 bg-[#2C53CA] hover:bg-[#2B66FD] text-[#ffffff] rounded-lg text-sm font-semibold shadow-lg shadow-[#004475]/20 transition-all active:scale-95">Refresh / Retry</button>
+                <button onclick="forceRefreshCheck()" id="btn-force-refresh" class="w-full sm:w-auto px-5 py-2.5 bg-[#2C53CA] hover:bg-[#2B66FD] text-[#ffffff] rounded-lg text-sm font-semibold shadow-lg shadow-[#004475]/20 transition-all active:scale-95">Refresh</button>
             </div>
 
             <div id="alert-actions-success" class="hidden justify-center w-full">
@@ -595,7 +595,7 @@
 
             const refBtn = document.getElementById('btn-force-refresh');
             if (refBtn) {
-                refBtn.innerText = "Refresh / Retry";
+                refBtn.innerText = "Refresh";
                 refBtn.disabled = false;
             }
         }

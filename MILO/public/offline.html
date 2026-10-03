@@ -210,12 +210,13 @@
         dotEl.style.background = "#00BBFC";
 
         try {
-            const response = await fetch('/?ping=' + Date.now(), {
-                method: 'HEAD',
-                cache: 'no-store'
+            const res = await fetch('/?ping=' + Date.now(), {
+                method: 'GET',
+                cache: 'no-store',
+                headers: { 'Cache-Control': 'no-cache' }
             });
 
-            if (response.ok || response.status < 500) {
+            if (res.ok || res.status < 500) {
                 textEl.innerText = "Connected! Reloading...";
                 pingEl.classList.remove('ping');
                 dotEl.style.background = "#2EA8FF";

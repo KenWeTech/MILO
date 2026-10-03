@@ -1,0 +1,25 @@
+{
+  "name": "MILO - Music Index & Library Organizer",
+  "short_name": "MILO",
+  "description": "Music Index & Library Organizer for creating separate libraries from a master music pool without duplicating audio files.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#000000",
+  "theme_color": "#000012",
+  "icons": [
+    {
+      "src": "/assets/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

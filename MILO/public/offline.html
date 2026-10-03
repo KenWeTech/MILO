@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#000012">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>MILO - Offline</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        html, body {
+            margin: 0;
+            min-height: 100%;
+        }
+
+        body {
+            background: #000000;
+            color: #f1f2f6;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+            font-family: Arial, Helvetica, sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .offline-card {
+            background: #000012;
+            border: 1px solid #216281;
+            padding: 2rem;
+            border-radius: 1rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
+            width: 100%;
+            max-width: 28rem;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .reconnect-button {
+            appearance: none;
+            border: 0;
+            background: transparent;
+            color: inherit;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            transition: transform 0.15s ease;
+            margin-bottom: 1rem;
+            padding: 0;
+        }
+
+        .reconnect-button:hover .reconnect-text {
+            text-decoration: underline;
+        }
+
+        .reconnect-button:active {
+            transform: scale(0.95);
+        }
+
+        .logo {
+            width: 12rem;
+            height: 12rem;
+            object-fit: contain;
+            display: block;
+            animation: pulse-ring 2.5s infinite ease-in-out;
+        }
+
+        .reconnect-text {
+            margin-top: 0.5rem;
+            color: #00BBFC;
+            font-size: 0.75rem;
+            line-height: 1rem;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            gap: 0.375rem;
+        }
+
+        .reconnect-text svg {
+            width: 1rem;
+            height: 1rem;
+        }
+
+        h2 {
+            margin: 0 0 0.5rem;
+            color: #ffffff;
+            font-size: 1.25rem;
+            line-height: 1.75rem;
+            font-weight: 700;
+        }
+
+        #status-message {
+            margin: 0 0 1.5rem;
+            color: #b4b7c5;
+            font-size: 0.875rem;
+            line-height: 1.5rem;
+            max-width: 20rem;
+        }
+
+        .status-box {
+            width: 100%;
+            background: #000000;
+            border: 1px solid #2a2e43;
+            padding: 0.625rem 1rem;
+            border-radius: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            color: #7a7d90;
+            font-size: 0.75rem;
+            line-height: 1rem;
+        }
+
+        .dot-wrapper {
+            position: relative;
+            width: 0.5rem;
+            height: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        #status-dot {
+            width: 0.5rem;
+            height: 0.5rem;
+            border-radius: 9999px;
+            background: #ff80a8;
+            position: absolute;
+        }
+
+        #status-ping-ring {
+            width: 0.5rem;
+            height: 0.5rem;
+            border-radius: 9999px;
+            background: #00BBFC;
+            position: absolute;
+            display: none;
+        }
+
+        #status-ping-ring.ping {
+            display: block;
+            animation: ping 1s cubic-bezier(0, 0, 0.2, 1) infinite;
+        }
+
+        @keyframes pulse-ring {
+            0% { transform: scale(0.95); opacity: 0.8; }
+            50% { transform: scale(1.05); opacity: 0.4; }
+            100% { transform: scale(0.95); opacity: 0.8; }
+        }
+
+        @keyframes ping {
+            75%, 100% { transform: scale(2.5); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="offline-card">
+    <button type="button" onclick="checkConnection()" class="reconnect-button" title="Click to reconnect" aria-label="Reconnect to MILO">
+        <img src="/assets/logo.png" alt="MILO Logo" class="logo">
+        <span class="reconnect-text">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+            </svg>
+            Tap Logo to Reconnect
+        </span>
+    </button>
+
+    <h2>You are Offline</h2>
+
+    <p id="status-message">
+        MILO cannot connect to the server right now. Check your network or tap the logo above to refresh.
+    </p>
+
+    <div class="status-box" aria-live="polite">
+        <div class="dot-wrapper">
+            <span id="status-dot"></span>
+            <span id="status-ping-ring"></span>
+        </div>
+        <span id="status-text">Disconnected from MILO Web Server</span>
+    </div>
+</div>
+
+<script>
+    let isChecking = false;
+
+    async function checkConnection() {
+        if (isChecking) return;
+        isChecking = true;
+
+        const textEl = document.getElementById('status-text');
+        const msgEl = document.getElementById('status-message');
+        const dotEl = document.getElementById('status-dot');
+        const pingEl = document.getElementById('status-ping-ring');
+
+        textEl.innerText = "Testing connection...";
+        pingEl.classList.add('ping');
+        dotEl.style.background = "#00BBFC";
+
+        try {
+            const res = await fetch('/?ping=' + Date.now(), {
+                method: 'GET',
+                cache: 'no-store',
+                headers: { 'Cache-Control': 'no-cache' }
+            });
+
+            if (res.ok || res.status < 500) {
+                textEl.innerText = "Connected! Reloading...";
+                pingEl.classList.remove('ping');
+                dotEl.style.background = "#2EA8FF";
+
+                setTimeout(() => {
+                    window.location.replace('/');
+                }, 200);
+                return;
+            }
+        } catch (err) {
+
+        }
+
+        setTimeout(() => {
+            textEl.innerText = "Still Offline";
+            msgEl.innerText = "Server is still unreachable. Make sure you are connected to the network.";
+            pingEl.classList.remove('ping');
+            dotEl.style.background = "#ff80a8";
+            isChecking = false;
+        }, 800);
+    }
+
+    window.addEventListener('online', checkConnection);
+    window.addEventListener('focus', checkConnection);
+</script>
+
+</body>
+</html>

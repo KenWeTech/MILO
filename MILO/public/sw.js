@@ -1,4 +1,4 @@
-const CACHE_NAME = 'milo-pwa-v3';
+const CACHE_NAME = 'milo-pwa-v1';
 const PRECACHE_ASSETS = [
   '/offline.html',
   '/assets/logo.png',
@@ -7,10 +7,10 @@ const PRECACHE_ASSETS = [
 ];
 
 self.addEventListener('install', (event) => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => cache.addAll(PRECACHE_ASSETS))
-      .then(() => self.skipWaiting())
   );
 });
 
@@ -37,26 +37,40 @@ self.addEventListener('fetch', (event) => {
 
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).catch(() => caches.match('/offline.html'))
+      fetch(request)
+        .then((response) => {
+
+          if (!response.ok && response.status >= 500) {
+            return caches.match('/offline.html');
+          }
+          return response;
+        })
+        .catch(() => caches.match('/offline.html')) 
     );
     return;
   }
 
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(
-      fetch(request).catch(() => 
-        new Response(
-          JSON.stringify({ error: 'Network unavailable', offline: true }),
-          { status: 503, headers: { 'Content-Type': 'application/json' } }
+      fetch(request)
+        .then((response) => {
+          if (!response.ok && response.status >= 500) {
+            throw new Error("Proxy Server Error");
+          }
+          return response;
+        })
+        .catch(() => 
+          new Response(
+            JSON.stringify({ error: 'Network unavailable', offline: true }),
+            { status: 503, headers: { 'Content-Type': 'application/json' } }
+          )
         )
-      )
     );
     return;
   }
 
   event.respondWith(
     caches.match(request).then((cachedResponse) => {
-
       const fetchPromise = fetch(request)
         .then((networkResponse) => {
           if (networkResponse && (networkResponse.status === 200 || networkResponse.type === 'opaque')) {
@@ -67,7 +81,7 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(() => {
 
-          if (cachedResponse) return;
+          if (cachedResponse) return cachedResponse;
           return new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } });
         });
 

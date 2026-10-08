@@ -38,7 +38,7 @@ jobs:
 
           labels: |
             org.opencontainers.image.created=${{ steps.meta.outputs.created }}
-            org.opencontainers.image.description=MILO is a self-hosted music catalog and library organization server that manages access by creating separate libraries from a master music pool without duplicating audio files.
+            org.opencontainers.image.description="MILO is a self-hosted music catalog and library organization server that manages access by creating separate libraries from a master music pool without duplicating audio files."
             org.opencontainers.image.licenses=
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.event.repository.html_url }}
@@ -47,7 +47,7 @@ jobs:
             org.opencontainers.image.version=${{ steps.meta.outputs.version }}
 
           annotations: |
-            org.opencontainers.image.description=MILO is a self-hosted music catalog and library organization server that manages access by creating separate libraries from a master music pool without duplicating audio files.
+            org.opencontainers.image.description="MILO is a self-hosted music catalog and library organization server that manages access by creating separate libraries from a master music pool without duplicating audio files."
             org.opencontainers.image.title=MILO
             org.opencontainers.image.source=${{ github.event.repository.html_url }}
 

@@ -2,6 +2,8 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const https = require('https');
+const { execSync } = require('child_process');
 const bonjour = require('bonjour')();
 const express = require('express');
 const session = require('express-session');
@@ -78,7 +80,7 @@ function initDb() {
             added_at REAL DEFAULT 0
         );
 
-        CREATE TABLE IF NOT EXISTS system_settings (
+        CREATE TABLE IF NOT EXISTS scan_settings (
             key TEXT PRIMARY KEY,
             value TEXT
         );
@@ -306,20 +308,64 @@ function extractPlaylistId(url, provider) {
     return url.trim();
 }
 
-async function walkDir(dir) {
+async function walkDir(dir, exemptPaths = []) {
     let results = [];
     const list = await fs.promises.readdir(dir, { withFileTypes: true });
     for (let i = 0; i < list.length; i++) {
         if (i % 20 === 0) await new Promise(r => setImmediate(r));
         const file = list[i];
         const fullPath = path.join(dir, file.name);
+
+        const isExempt = exemptPaths.some(p => path.resolve(fullPath) === p);
+        if (isExempt) continue;
+
         if (file.isDirectory()) {
-            results = results.concat(await walkDir(fullPath));
+            results = results.concat(await walkDir(fullPath, exemptPaths));
         } else if (/\.(mp3|flac|m4a|ogg|wav)$/i.test(file.name)) {
             results.push(fullPath);
         }
     }
     return results;
+}
+
+function getExemptPaths() {
+    let exemptPaths = [];
+    try {
+        const exemptStr = db.prepare("SELECT value FROM scan_settings WHERE key = 'exempt_folders'").get()?.value;
+        if (exemptStr) {
+            const parsed = JSON.parse(exemptStr);
+            if (Array.isArray(parsed)) exemptPaths.push(...parsed);
+        }
+    } catch (e) {}
+
+    try {
+        const dumpFoldersStr = db.prepare("SELECT value FROM scan_settings WHERE key = 'dump_folders'").get()?.value;
+        if (dumpFoldersStr) {
+            const dumpFolders = JSON.parse(dumpFoldersStr);
+            if (Array.isArray(dumpFolders)) {
+                for (const item of dumpFolders) {
+                    const p = typeof item === 'string' ? item : item?.path;
+                    if (p && !exemptPaths.includes(p)) exemptPaths.push(p);
+                }
+            }
+        }
+    } catch (e) {}
+
+    try {
+        const dumpFolder = db.prepare("SELECT value FROM scan_settings WHERE key = 'dump_folder'").get()?.value || '';
+        if (dumpFolder && !exemptPaths.includes(dumpFolder)) {
+            exemptPaths.push(dumpFolder);
+        }
+    } catch (e) {}
+
+    try {
+        const trashFolder = db.prepare("SELECT value FROM scan_settings WHERE key = 'trash_folder'").get()?.value || '';
+        if (trashFolder && !exemptPaths.includes(trashFolder)) {
+            exemptPaths.push(trashFolder);
+        }
+    } catch (e) {}
+
+    return exemptPaths.map(p => path.isAbsolute(p) ? path.resolve(p) : path.resolve(MASTER_POOL_DIR, p));
 }
 
 let activeScanJob = { status: 'idle', progress: 0, total: 0, message: '' };
@@ -336,7 +382,8 @@ app.post('/api/catalog/scan', requireLogin, async (req, res) => {
     res.json({ success: true, message: "Scan started" });
 
     try {
-        const files = await walkDir(MASTER_POOL_DIR);
+        const exemptPaths = getExemptPaths();
+        const files = await walkDir(MASTER_POOL_DIR, exemptPaths);
         activeScanJob.total = files.length;
         activeScanJob.status = 'running';
         let scanned = 0;
@@ -463,18 +510,61 @@ app.delete('/api/admin/users/:user_id', requireLogin, (req, res) => {
     res.json({ success: true });
 });
 
-app.get('/api/admin/system-settings', requireLogin, (req, res) => {
+app.get('/api/admin/scan-settings', requireLogin, (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({});
-    const rows = db.prepare("SELECT * FROM system_settings").all();
+    const rows = db.prepare("SELECT * FROM scan_settings").all();
     const settings = {};
     for (const r of rows) settings[r.key] = r.value;
+
+    if (settings.exempt_folders) {
+        try { settings.exempt_folders = JSON.parse(settings.exempt_folders); } 
+        catch (e) { settings.exempt_folders = []; }
+    } else {
+        settings.exempt_folders = [];
+    }
+
+    if (settings.dump_folders) {
+        try { settings.dump_folders = JSON.parse(settings.dump_folders); }
+        catch (e) { settings.dump_folders = []; }
+    } else {
+        settings.dump_folders = [];
+        if (settings.dump_folder && settings.dump_folder.trim()) {
+            settings.dump_folders.push({ path: settings.dump_folder.trim(), user_id: null });
+        }
+    }
+
+    if (!settings.trash_folder) {
+        settings.trash_folder = '';
+    }
+
+    const users = db.prepare("SELECT id, username FROM users").all();
+    settings.users = users;
+
     res.json(settings);
 });
 
-app.post('/api/admin/system-settings', requireLogin, (req, res) => {
+app.post('/api/admin/scan-settings', requireLogin, (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({});
-    const { master_scan_interval } = req.body;
-    db.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('master_scan_interval', ?)").run(master_scan_interval || '0');
+    const { master_scan_interval, exempt_folders, dump_folders, dump_folder, trash_folder } = req.body;
+
+    db.prepare("INSERT OR REPLACE INTO scan_settings (key, value) VALUES ('master_scan_interval', ?)").run(String(master_scan_interval || '0'));
+
+    if (Array.isArray(exempt_folders)) {
+        db.prepare("INSERT OR REPLACE INTO scan_settings (key, value) VALUES ('exempt_folders', ?)").run(JSON.stringify(exempt_folders));
+    }
+
+    if (Array.isArray(dump_folders)) {
+        db.prepare("INSERT OR REPLACE INTO scan_settings (key, value) VALUES ('dump_folders', ?)").run(JSON.stringify(dump_folders));
+    } else if (dump_folder !== undefined) {
+        const legacyArr = dump_folder.trim() ? [{ path: dump_folder.trim(), user_id: null }] : [];
+        db.prepare("INSERT OR REPLACE INTO scan_settings (key, value) VALUES ('dump_folders', ?)").run(JSON.stringify(legacyArr));
+        db.prepare("INSERT OR REPLACE INTO scan_settings (key, value) VALUES ('dump_folder', ?)").run(dump_folder.trim());
+    }
+
+    if (trash_folder !== undefined) {
+        db.prepare("INSERT OR REPLACE INTO scan_settings (key, value) VALUES ('trash_folder', ?)").run(trash_folder.trim());
+    }
+
     res.json({ success: true, message: "System settings saved." });
 });
 
@@ -1416,26 +1506,29 @@ app.use((err, req, res, next) => {
     res.status(500).json({ success: false, message: "Internal server error." });
 });
 
-function runBackgroundScheduler() {
+function runBackgroundScheduler(activeProtocol = 'http') {
     setInterval(async () => {
         const now = Date.now() / 1000;
 
         try {
-            const masterIntervalRow = db.prepare("SELECT value FROM system_settings WHERE key = 'master_scan_interval'").get();
-            const lastMasterScanRow = db.prepare("SELECT value FROM system_settings WHERE key = 'last_master_scan'").get();
+            const masterIntervalRow = db.prepare("SELECT value FROM scan_settings WHERE key = 'master_scan_interval'").get();
+            const lastMasterScanRow = db.prepare("SELECT value FROM scan_settings WHERE key = 'last_master_scan'").get();
             const masterInterval = parseInt(masterIntervalRow?.value || 0) * 60;
             const lastMasterScan = parseFloat(lastMasterScanRow?.value || 0);
 
             if (masterInterval > 0 && (now - lastMasterScan >= masterInterval)) {
                 if (activeScanJob.status === 'idle' || activeScanJob.status === 'completed' || activeScanJob.status === 'error') {
-                    db.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('last_master_scan', ?)").run(now);
-                    axios.post(`http://localhost:${PORT}/api/catalog/scan`, {}, {
-                        headers: { 'Cookie': `connect.sid=scheduler` } 
+                    db.prepare("INSERT OR REPLACE INTO scan_settings (key, value) VALUES ('last_master_scan', ?)").run(now);
+
+                    const agentConfig = activeProtocol === 'https' ? { httpsAgent: new https.Agent({ rejectUnauthorized: false }) } : {};
+                    axios.post(`${activeProtocol}://localhost:${PORT}/api/catalog/scan`, {}, {
+                        headers: { 'Cookie': `connect.sid=scheduler` },
+                        ...agentConfig
                     }).catch(()=>{}); 
 
                     if (fs.existsSync(MASTER_POOL_DIR) && (activeScanJob.status !== 'running' && activeScanJob.status !== 'fetching')) {
                         activeScanJob = { status: 'fetching', progress: 0, total: 0, message: 'Scheduled Master Scan...' };
-                        walkDir(MASTER_POOL_DIR).then(async (files) => {
+                        walkDir(MASTER_POOL_DIR, getExemptPaths()).then(async (files) => {
                             activeScanJob.total = files.length;
                             activeScanJob.status = 'running';
                             let scanned = 0;
@@ -1484,31 +1577,83 @@ let serverInstance;
 
 async function startServer() {
     try {
-        serverInstance = http.createServer(app).listen(PORT, '0.0.0.0', () => {
-            console.log(`HTTP server running on port ${PORT}`);
+        const USE_SSL = process.env.USE_SSL === 'true';
+
+        if (USE_SSL) {
+            let sslOptions = null;
+            const certDir = path.join(__dirname, 'ssl');
+            const keyPath = process.env.SSL_KEY_PATH || path.join(certDir, 'milo.key');
+            const certPath = process.env.SSL_CERT_PATH || path.join(certDir, 'milo.crt');
+
+            if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
+                sslOptions = {
+                    key: fs.readFileSync(keyPath),
+                    cert: fs.readFileSync(certPath)
+                };
+            } else {
+                console.log('[SSL] Certificates not found. Attempting to auto-generate self-signed certs...');
+                try {
+                    fs.mkdirSync(certDir, { recursive: true });
+                    let generated = false;
+
+                    try {
+                        const selfsigned = require('selfsigned');
+                        const pems = selfsigned.generate([{ name: 'commonName', value: 'milo.local' }], { days: 3650 });
+                        fs.writeFileSync(keyPath, pems.private);
+                        fs.writeFileSync(certPath, pems.cert);
+                        sslOptions = { key: pems.private, cert: pems.cert };
+                        generated = true;
+                        console.log('[SSL] Auto-generated certs using "selfsigned" package.');
+                    } catch (e) {}
+
+                    if (!generated) {
+                        execSync(`openssl req -x509 -newkey rsa:2048 -nodes -sha256 -subj "/CN=milo.local" -days 3650 -keyout "${keyPath}" -out "${certPath}"`, { stdio: 'ignore' });
+                        sslOptions = {
+                            key: fs.readFileSync(keyPath),
+                            cert: fs.readFileSync(certPath)
+                        };
+                        console.log('[SSL] Auto-generated certs using OpenSSL.');
+                    }
+                } catch (err) {
+                    console.error('[SSL Error] Failed to generate certs. Ensure OpenSSL is installed or supply certs manually. Falling back to HTTP.', err.message);
+                }
+            }
+
+            if (sslOptions) {
+                serverInstance = https.createServer(sslOptions, app);
+            } else {
+                serverInstance = http.createServer(app);
+            }
+        } else {
+            serverInstance = http.createServer(app);
+        }
+
+        serverInstance.listen(PORT, '0.0.0.0', () => {
+            const activeProtocol = (serverInstance instanceof https.Server) ? 'https' : 'http';
+            console.log(`${activeProtocol.toUpperCase()} server running on port ${PORT}`);
             if (process.send) {
                 process.send('server-ready');
             }
-            runBackgroundScheduler();
+            runBackgroundScheduler(activeProtocol);
 
             try {
                 const service = bonjour.publish({
                     name: 'MILO Web Server',
-                    type: 'http',
+                    type: activeProtocol,
                     port: PORT,
                     protocol: 'tcp',
                     host: 'milo.local'
                 });
 
                 service.on('up', () => {
-                    console.log(`[mDNS] HTTP service 'MILO Web Server' is up and discoverable at http://milo.local:${PORT}`);
+                    console.log(`[mDNS] ${activeProtocol.toUpperCase()} service 'MILO Web Server' is up and discoverable at ${activeProtocol}://milo.local:${PORT}`);
                 });
 
                 service.on('error', (err) => {
-                    console.error(`[mDNS Error] Failed to publish HTTP service: ${err.message}`);
+                    console.error(`[mDNS Error] Failed to publish service: ${err.message}`);
                 });
             } catch (e) {
-                console.error(`[mDNS Error] Exception while trying to publish HTTP service: ${e.message}`);
+                console.error(`[mDNS Error] Exception while trying to publish service: ${e.message}`);
             }
         });
     } catch (error) {

@@ -4,111 +4,115 @@
 
 # **MILO — Music Index & Library Organizer**
 
-MILO is a self-hosted music catalog and library organization server. It presents an existing music collection as a browsable index, allowing authenticated users to build and manage their own personal music libraries without duplicating the underlying audio files.
+MILO is a self-hosted music catalog and library organization server. It presents an existing music collection as a browsable index, allowing authenticated users to build and manage their own personal music libraries without making a separate physical copy of tracks.
 
 ## What MILO Does
 
-MILO sits between a master music collection and the individual libraries created from it:
+MILO has two connected jobs: if programed it can organize incoming music into the master collection, and it can build separate personal libraries from that collection.
 
 ```text
-┌──────────────────────────┐
-│  Master Music Collection │
-│    Original Files        │
-└────────────┬─────────────┘
-             │
-             ▼
-┌──────────────────────────┐
-│     MILO Music Index     │
-│  Browse • Search • View  │
-└────────────┬─────────────┘
-             │
-       User selection
-       or playlist sync
-             │
-             ▼
-┌──────────────────────────┐
-│    User's MILO Library   │
-│  Selected tracks/albums  │
-│     represented by       │
-│   Plex/Navidrome/etc.    │
-└──────────────────────────┘
+        Incoming audio files
+         Dump / staging folders
+                  |
+                  v
+          +------------------+
+          |   MILO Organizer |
+          | Embedded tags    |
+          | Naming script    |
+          | Duplicate review |
+          +------------------+
+                  |
+                  v
+       +------------------------+
+       | Master Music Collection|
+       |     Original audio     |
+       +------------+-----------+
+                    |
+                    v
+          +------------------+
+          | MILO Music Index |
+          | Browse / Search  |
+          +--------+---------+
+                   |
+          User selection or sync
+          Personal Text Playlist
+                   |
+                   v
+          +------------------+
+          | User's MILO      |
+          | personal library |
+          | links to sources |
+          +--------+---------+
+                   |
+                   v
+          Plex, Navidrome, or
+        compatible media software
 ```
 
-Rather than making a complete copy of the music collection for every user, MILO creates user-specific library structures using **symbolic links** to the original files.
+The Organizer uses embedded tags and a configurable naming script to place staged files into the folder structure you choose. The default layout groups by album artist, then album (or a title-based `(Single)` folder when no album tag is available), with track/disc information and format details available in the resulting paths and filenames. When a candidate is ambiguous or conflicts with an existing file, it can be held for review. The catalog and personal-library features then let multiple people select different music without requiring a separate physical copy for every user. To activate the Organizer at least one `Dump Folder` and a `Trash Folder` needs to be configured.
+Rather than making a complete copy of the music collection for every user, MILO creates user-specific library structures with **symbolic links** to the original files, or **hard links** when Advanced Mode and the underlying filesystem support them.
 
-This makes it possible for multiple users to have different libraries while the server maintains a single underlying music collection. There is no need to increase storage simply because multiple people want separate libraries. Favorite the songs you like because you can, without wasting storage as a workaround for separating libraries.
+One collection can therefore support multiple personal libraries without using additional music-file storage every time someone wants a different selection. Favorite the songs you like because you can, without needing to duplicate music or change your tags just to separate libraries.
 
 ## Core Features
 
-* **Music catalog** — Browse an indexed view of the available music.
-* **Track selection** — Add individual tracks to a personal library.
-* **Library management** — View and remove tracks from a user's library.
-* **Playlist synchronization** — Use playlists as a convenient way to select groups of tracks.
-* **Automatic playlist synchronization** — Enable Auto Sync to automatically process a configured playlist on the schedule established by the administrator.
-* **Per-user libraries** — Each account can maintain its own selection.
-* **Symlink-based libraries** — User libraries reference the original files instead of duplicating them.
-* **Advanced linking mode** — Use hard links where supported for applications that require them.
-* **Non-destructive removal** — Removing a track from a user library removes its library reference; it does not delete the original music file.
-* **Fuzzy playlist matching** — Imported playlist information is matched against the local music catalog.
-* **Failed match tracking** — Tracks that cannot be confidently matched are recorded for review.
-* **Multiple playlist sources** — Import playlists from Spotify, YouTube Music, Apple Music, or plain text.
-* **Self-hosted** — MILO is designed to run against a music collection you control.
-* **Progressive Web App (PWA) Support** — Install MILO on your supported devices to use it seamlessly as a native-like application.
-* **mDNS Support** — Easily access your MILO instance over your local network using ⁠`milo.local⁠` without needing to memorize IP addresses.
+* **Searchable master catalog** — Browse, search, sort, and filter an indexed view of the music in the master collection.
+* **Personal music libraries** — Give each account its own track selection and library path without forcing everyone to maintain the same library.
+* **Two library-linking modes** — Use symbolic links in Standard Mode or hard links in Advanced Mode when the filesystem supports them.
+* **Non-destructive library selection** — Add or remove selections from a user's library without intentionally deleting the original master-pool audio files.
+* **Music Organizer** — Process incoming files from configured dump/staging folders and place them into a tag-driven folder structure using a configurable MusicBrainz Picard-style naming script. This feature is optional and renenaming the audio files themselves is an option.
+* **Duplicate and metadata review** — Compare embedded metadata and file details, review duplicate files, path conflicts, possible matches, and quality upgrades, and choose how each uncertain case should be handled instead of blindly overwriting a file if you use Organizer.
+* **Quick Scan and Detailed Full Scan** — Check for new or changed music, run deeper catalog refreshes, process organizer staging folders, and reconcile recognized moved or upgraded files.
+* **Plain-text Personal Text Playlist** — Keep a saved artist/title list independent of provider websites and APIs, including entries that cannot yet be matched to a file in the catalog.
+* **Text Playlist API** — Let external apps, automations, and shortcuts add tracks to a user's saved Text Playlist through a user-specific API key.
+* **Playlist provider imports** — Import playlists from Spotify, YouTube Music, and Apple Music when their accessible playlist data is available.
+* **Import preview and matching review** — Check tracks to add, tracks already in the library, and unmatched entries before applying a manual import.
+* **Unmatched Logs and Restore Tracks** — Revisit unmatched entries, review or correct possible matches, undo supported changes, and restore previous library selections.
+* **Dead Files recovery** — Find catalog paths that no longer exist and repair entries when a verified replacement file is available.
+* **Scheduled maintenance and sync** — Configure Quick Scan, Detailed Full Scan, and user sync schedules while MILO coordinates maintenance and sync work.
+* **Progressive Web App** — Install MILO on supported devices and use its offline fallback when the browser's secure-context and certificate requirements are met.
+* **Local network discovery** — Discover the server as `milo.local` on networks and container setups where mDNS traffic is supported.
+* **Administrator tools** — Manage accounts, roles, library paths, linking modes, scan settings, organizer review, provider credentials, and catalog maintenance from the web interface.
+
+MILO is **not a music player**. It builds the catalog and filesystem libraries, and it can organize incoming music. Compatible software such as Plex, Navidrome, or another media application can use the resulting libraries for playback and media management. MILO does **not** edit metadata.
 
 ## Why MILO?
 
-Traditional music servers generally focus on **playing** a collection as a whole. You should not have to waste your storage or alter your favorite music tags simply to separate your music into different libraries.
+Traditional music servers generally focus on **playing** a collection as a whole. You should not have to waste storage or change your favorite music tags just to separate your music into different libraries.
 
-Many people end up using a music server's **Favorites** feature as a workaround for this problem: they favorite the songs they want, then configure the server to show or expose only those favorites. Favorites are useful for marking music you actually want to favorite. They should not have to become a substitute for having a separate library.
+A common workaround is to use a music server's **Favorites** feature: favorite the songs you want, then configure the server to expose only those favorites. Favorites are useful for marking music you actually want to favorite. They should not have to become a substitute for having a separate library.
 
-MILO focuses on **organizing access to a collection**.
+MILO focuses on **both music organization and organizing access to a collection**. Its Organizer if configured can process incoming files from staging folders, use embedded tags and a configurable naming script to build a consistent folder structure, and send uncertain matches or destination conflicts to review rather than blindly overwriting files. The catalog and the Organizer work together to keep the pool usable as files are added, moved, or upgraded.
 
-The goal is to make one large music collection usable by multiple people who may each want a different subset of that collection. MILO provides the catalog and selection layer, then maintains those individual libraries without requiring another physical copy of every audio file.
-
-This means users can choose the music they actually want in their own library without everyone being forced to use the same library or resorting to Favorites as a library-separation workaround.
+From that collection, each person can choose the music they actually want in their own library without everyone being forced to use the same collection and resorting to Favorites as a library-separation workaround. The result is one collection that can be organized and maintained centrally while still supporting distinct personal libraries.
 
 ### One collection. Many libraries. No unnecessary duplication.
 
 ## How It Works
 
-### 1. Index the master collection
+### 1. Point MILO at the master collection and configure incoming folders
 
-MILO scans and indexes the configured music collection so it can be presented as a searchable, browsable catalog.
+MILO indexes an existing master music collection; it does not need to copy that entire collection into a new location. Administrators can also configure one or more **Dump Folders - Staging** locations for new or unorganized files, folders that should be exempt from catalog indexing, and a dedicated Trash folder for organizer review. A configurable MusicBrainz Picard-style naming script controls the destination folder structure. The option to rename audio files using that script can be enabled or left off.
 
-The catalog stores the information needed to identify and match the music while the original files remain in the master collection.
+### 2. Scan the collection and organize staged files
 
-### 2. Browse the catalog
+**Quick Scan** checks paths, file sizes, and modification times to find new or changed files, then hashes those files and refreshes their embedded metadata. **Detailed Full Scan** performs a deeper hash and metadata pass across the master pool, processes configured staging folders, and reconciles recognized moved or upgraded paths. Use a Detailed Full Scan for initial catalog setup or when a file may have changed without a corresponding size or timestamp change.
 
-Users sign in and browse the music available from the master collection.
+During organizer processing, MILO reads embedded tags and checks file identity before deciding whether a staged item can be placed at the destination generated by the naming script. Files with incomplete metadata, duplicates, destination conflicts, or possible matches can be queued for review. The Organizer Review tools let the administrator compare the candidate with the existing pool file and choose an appropriate action. When a configured Trash folder is available, duplicates and replaced versions can be staged there for review.
 
-Tracks can be searched, sorted, filtered, and viewed through the catalog.
+### 3. Browse the catalog and select music
 
-### 3. Select music
+Users sign in to browse, search, sort, and filter the catalog built from the master collection. They can add individual tracks or select a group of tracks using a saved Personal Text Playlist, a supported provider playlist, or a manual import preview.
 
-A user can select individual tracks or use a playlist to select multiple tracks at once.
+### 4. Build a personal library without duplicating the audio
 
-Individual tracks can be added or removed directly from the catalog.
+MILO creates a user's library structure using filesystem links to the source music. Standard Mode uses symbolic links; Advanced Mode uses hard links when the storage and filesystem support them. The underlying source audio is not copied once for every user.
 
-### 4. Build the personal library
+### 5. Sync and maintain each library
 
-MILO creates the user's library structure using filesystem links that point back to the original files.
+Normal playlist sync is additive: matching tracks can be added, while existing selections are not removed just because they are absent from a playlist. The optional **One-for-One Playlist Mirror** mode instead makes the configured playlist define which library selections remain. Users can review unmatched entries, restore previous selections, and remove tracks from their own libraries. Administrators can run catalog scans and Dead Files checks as the master pool changes.
 
-Standard Mode uses symbolic links.
-
-Advanced Mode uses hard links when the storage and filesystem support them.
-
-### 5. Manage the library
-
-Users can add additional tracks, synchronize playlists, review failed matches, or remove selections as their library changes.
-
-**Synchronizing a playlist does not remove tracks from the user's existing library.**
-
-A playlist sync is used to find and add tracks from the playlist that match the local catalog. Tracks the user already has remain in the library, even if they are not present in the playlist being synchronized.
-
-Removing a selection from a user's library does **not** remove the source file from the master collection.
-
-The exception is **One-for-One Sync**, which can be enabled when a user specifically wants their library to follow the contents of a configured playlist. One-for-One Sync is an explicit library-management option and is separate from normal additive playlist synchronization.
+Removing a selection from a user's MILO library removes that user's library reference; it does **not** intentionally delete the source audio. Organizer actions are separate: depending on the review decision and configured locations, the Organizer can move or rename staged audio files in the master-pool workflow.
 
 ## Library Linking Modes
 
@@ -116,126 +120,71 @@ MILO supports two ways of representing files in user libraries.
 
 ### Standard Mode
 
-Standard Mode uses **symbolic links**.
+Standard Mode uses **symbolic links**. A file shown in a user library points back to the original file in the master collection rather than being copied into that library.
 
-```text
-Master Collection
-      │
-      └── Artist/Album/Track.flac
-                    ▲
-                    │ symbolic link
-                    │
-User Library
-      └── Artist/Album/Track.flac
-```
-
-The user library contains links pointing to the original files in the master collection rather than copies of those files.
-
-This is the default and generally recommended mode.
+This is the default and generally recommended mode. Symbolic links are widely supported, but some media applications or library configurations may not follow or discover them as expected.
 
 ### Advanced Mode
 
-Advanced Mode uses **hard links** instead of symbolic links.
+Advanced Mode uses **hard links** instead of symbolic links. A hard link refers to the same underlying file data without making another physical copy of the music.
 
-Hard links reference the same underlying file data without creating another physical copy of the music.
-
-Hard links have stricter filesystem requirements than symbolic links. The relevant files must be on storage that supports hard links, and the source and destination must be on the same filesystem/physical volume where required.
-
-Advanced Mode is particularly useful when another application does not properly recognize symbolic-link-based libraries.
+Hard links have stricter filesystem requirements than symbolic links. The source and destination must satisfy the operating system and filesystem's hard-link requirements and, where required, reside on the same filesystem/physical volume. Network shares, virtual filesystems, and container volume layouts can prevent hard linking even when both paths are visible.
 
 ### Plex and Advanced Mode
 
-If you intend to use the libraries created by MILO with **Plex**, you may need to use **Advanced Mode**.
+If you intend to use MILO-generated libraries with **Plex**, you may need Advanced Mode. Depending on how Plex is installed and how its library path is mounted, Plex may not properly discover or display music represented by symbolic links. Hard links can allow Plex to see those entries as regular filesystem files without duplicating the underlying file data.
 
-Depending on the Plex installation and how the library path is mounted, Plex may not properly discover or display music represented by symbolic links. Using hard links can allow Plex to see the files as normal filesystem files while still avoiding duplicate storage.
+If Plex does not show a Standard Mode library correctly, Advanced Mode is worth trying when the storage supports hard links. Other media applications may handle symbolic links differently, so Standard Mode remains the best starting point unless you have a specific reason to use hard links.
 
-If Plex does not show a MILO-generated library correctly while using Standard Mode, Advanced Mode is the first option to try, provided the underlying storage supports hard links.
+## Example: One Source File, Separate Libraries
 
-Other music and media applications may have different behavior when handling symbolic links.
+The master collection stores the actual audio files. Each personal library contains a filesystem link to the selected source file rather than a second copy of its audio data. For example:
 
-### Which mode should I use?
+```text
+/music
+└── Artists
+    └── Artist A
+        └── Album
+            └── 01 - Track.flac
 
-Use **Standard Mode** unless you have a reason to require hard links.
+/app/MILO_Libraries/alice
+└── Artists
+    └── Artist A
+        └── Album
+            └── 01 - Track.flac -> /music/Artists/Artist A/Album/01 - Track.flac
 
-Use **Advanced Mode** when:
+/app/MILO_Libraries/bob
+└── Artists
+    └── Artist B
+        └── Album
+            └── 02 - Another Track.flac -> /music/Artists/Artist B/Album/02 - Another Track.flac
+```
 
-* Your media application does not properly follow symbolic links.
-* Plex does not properly discover the generated library.
-* You need the files represented as hard-linked filesystem entries.
-* Your storage configuration supports hard links.
+Alice and Bob can therefore expose different selections to their media software, even though the actual audio remains in the same master collection. The exact filesystem layout depends on each user's configured library path and linking mode.
 
 ## StableBit DrivePool Support
 
 MILO includes support for installations using **StableBit DrivePool**.
 
-When configured, MILO can locate the physical `PoolPart.*` storage containing a source file.
+When `DRIVEPOOL_DRIVES` is configured, MILO can search the specified physical member drives for a `PoolPart.*` directory containing the source file. In Advanced Mode, this lets MILO attempt to create the hard link against the underlying physical storage rather than the DrivePool virtual filesystem.
 
-This allows Advanced Mode to attempt the hard link against the underlying physical storage rather than the DrivePool virtual filesystem.
-
-Configure the physical DrivePool member drives using:
+Configure the physical DrivePool member drives as a comma-separated list:
 
 ```env
 DRIVEPOOL_DRIVES=D:,E:,F:
 ```
 
-Multiple drives can be provided as a comma-separated list.
+Use the actual drive letters present on your system. MILO checks the configured drives for a matching `PoolPart.*` location; this depends on the physical path being available and the corresponding file existing there.
 
-Advanced Mode still requires the underlying filesystem to support hard links. If the physical volume does not support them, Standard Mode should be used instead.
+DrivePool support does **not** remove the normal hard-link requirements. Advanced Mode still depends on filesystem support and compatible source/destination volumes. The current physical-drive bypass is intended for Windows DrivePool paths; if the underlying volume rejects the hard link, use Standard Mode or review the storage layout and permissions.
 
-## Playlists
+## Playlists and Synchronization
 
-Playlists provide a convenient way to select many tracks without manually adding each track from the catalog.
+MILO's **Personal Text Playlist** is the most dependable playlist source because it is a saved list that does not depend on a provider website, provider API, or scraping result. It uses the artist and track title the user supplies, one entry per line, and remains available for future syncs. Entries that do not match the current catalog stay saved so a later sync can try again after files or metadata are added or corrected.
 
-MILO supports:
+### Personal Text Playlist
 
-* Plain text lists
-* Spotify playlists
-* YouTube Music playlists
-* Apple Music playlists
-
-A playlist can be processed manually whenever the user wants to update their library.
-
-Playlist synchronization is **additive** by default. Tracks already in the user's library are not removed simply because they are absent from the playlist.
-
-### One-for-One Sync
-
-MILO also provides an optional **One-for-One Sync** mode.
-
-One-for-One Sync is intended for users who want a configured playlist to represent the contents of their library rather than simply use the playlist as an additional source of tracks.
-
-When One-for-One Sync is enabled, tracks matched from the playlist are kept and tracks that are no longer represented by the playlist can be removed from the user's MILO library.
-
-This behavior is intentionally different from normal playlist synchronization.
-
-One-for-One Sync only changes the user's library references. It does **not** delete the corresponding source music from the master collection.
-
-If One-for-One Sync is not enabled, playlist synchronization remains additive and existing library selections are retained.
-
-## Automatic Sync
-
-MILO includes an **Auto Sync** option in the user's Sync Settings.
-
-When enabled, the user configures the playlist they want MILO to synchronize.
-
-The administrator controls the server-wide schedule for automatic synchronization.
-
-When the scheduled sync runs, MILO automatically processes the user's configured playlist and submits the resulting matches for the user's library.
-
-Auto Sync is useful for playlists that change regularly. Instead of manually importing the playlist every time it changes, MILO can periodically check the configured playlist and add newly matching tracks to the user's library.
-
-Auto Sync does **not** turn the user's library into an exact copy of the playlist unless **One-for-One Sync** is explicitly enabled.
-
-With normal Auto Sync, tracks already in the user's library are not removed when they disappear from the playlist.
-
-When One-for-One Sync is enabled, Auto Sync can remove library selections that are no longer represented by the configured playlist.
-
-As with all MILO library removal operations, removing a library reference does not delete the original music file from the master collection.
-
-## Plain Text Playlists - Recommended
-
-MILO can accept a plain text list containing one track per line.
-
-For example:
+Use one `Artist - Track Title` entry per line. For example:
 
 ```text
 Daft Punk - One More Time
@@ -243,328 +192,168 @@ The Weeknd - Blinding Lights
 Gorillaz - Feel Good Inc.
 ```
 
-This can be useful even when the original music service is not directly supported by MILO.
+Users can create and edit their saved Text Playlist in the settings interface, select **Personal Text Playlist** as an import source, and use it with **Sync Playlist** button and scheduled syncs. The saved list is kept independently of a provider playlist. When a provider playlist is configured, Sync Playlist includes that provider playlist and the user's saved Text Playlist; when no provider is configured, the saved Text Playlist can be used on its own.
 
-Services such as **TuneMyMusic** can be used to convert playlists between music services or export playlist information into a text-based format that can then be supplied to MILO.
+Playlist-conversion services such as [TuneMyMusic](https://www.tunemymusic.com/) can export lists from a wider range of services than MILO's three direct provider integrations. When needed, a converted list can be pasted into **Manual Import** and previewed. The **Also save these text entries to my Text Playlist for future syncs** checkbox is a convenient way to add a pasted list to the saved Text Playlist, but Manual Import is not the only or primary way to maintain it.
 
-This also provides another option when a particular service's playlist information does not match the way the music is represented in the local catalog.
+### Text Playlist API
 
-In some cases, a text export may actually produce better matches than importing the playlist directly from a provider because the provider's playlist metadata can be formatted differently from the artist/title information stored in the local music collection.
+A user can create a personal API key in **Sync Settings → Text Playlist API Access**. External apps, automations, and shortcuts can add a track to that user's saved list with a JSON request:
 
-## Spotify
+```bash
+curl -X POST "http://localhost:8088/api/integrations/text-playlist" \
+  -H "Content-Type: application/json" \
+  -H "X-MILO-API-Key: YOUR_USER_API_KEY" \
+  -d '{"artist":"Daft Punk","title":"One More Time"}'
+```
 
-Spotify playlist importing supports two approaches.
+Replace `localhost` with the MILO server address when calling it from another device. Both `artist` and `title` are required. Duplicate entries are ignored. Keep the API key private; it can be revoked or replaced in Sync Settings. The full key is shown when generated and is not continuously displayed afterward.
 
-### Spotify API
+### Direct Playlist Provider Imports
 
-MILO can use Spotify API credentials to retrieve playlist tracks directly.
+MILO also supports direct playlist imports from Spotify, YouTube Music, and Apple Music as alternate sources when a provider playlist is convenient. A saved Personal Text Playlist remains independent of those provider connections.
 
-Configure global credentials using:
+#### Spotify
+
+MILO can use Spotify API credentials configured for the server:
 
 ```env
 SPOTIPY_CLIENT_ID=
 SPOTIPY_CLIENT_SECRET=
 ```
 
-When configured, MILO can use the Spotify API rather than relying on Spotify web-page scraping.
+An administrator can provide global credentials, and an individual user can instead enter their own Spotify credentials in Sync Settings. The user's credentials take precedence for that user's sync.
 
-**Spotify API credentials are highly recommended** if you intend to regularly use Spotify playlist synchronization.
+#### Apple Music
 
-### Per-User Spotify Credentials
-
-The administrator can configure Spotify API credentials globally for the MILO server.
-
-Individual users can also provide their **own Spotify API credentials** through their Sync Settings.
-
-This is useful when:
-
-* The administrator does not have Spotify API credentials configured.
-* The administrator does not want to provide global credentials.
-* A user wants to use their own Spotify developer application.
-* A user needs or prefers to use credentials associated with their own Spotify developer account.
-
-When a user has supplied their own Spotify credentials, those credentials take precedence for that user's Spotify playlist synchronization.
-
-Global administrator-configured credentials remain available for users who do not provide their own.
-
-### Spotify Scraping — Fallback
-
-When API credentials are not configured, MILO can attempt to retrieve playlist information through Spotify's web data.
-
-This scraping functionality is **not 100% reliable** may limit around 200 results.
-
-Spotify can change its website, embedded data, or other implementation details without notice. Such changes can cause scraping to stop working, return incomplete information, or behave differently from the official API.
-
-The scraper is therefore provided as a fallback and is **not intended to replace the official Spotify API**.
-
-If Spotify playlist synchronization is important to your setup, configuring the Spotify API credentials is strongly recommended.
-
-## Apple Music
-
-Apple Music playlist importing also supports two approaches.
-
-### Apple Music API
-
-MILO can use an Apple Music Developer Token to retrieve playlist tracks through Apple's Music API.
-
-Configure the global token using:
+The administrator can configure a global Apple Music Developer Token:
 
 ```env
 APPLE_DEVELOPER_TOKEN=
 ```
 
-When the token is available, MILO uses the Apple Music API.
+An individual user can provide their own token in Sync Settings; their token takes precedence for their own sync.
 
-**An Apple Music Developer Token is highly recommended** if you intend to regularly use Apple Music playlist synchronization.
+#### YouTube Music
 
-### Per-User Apple Music Credentials
+MILO accepts YouTube Music playlist links or IDs and does not require a separate YouTube API key in its current configuration. Imported playlist data is matched against the local catalog.
 
-The administrator can configure an Apple Music Developer Token globally for the MILO server.
+### Playlist Sync Options
 
-Individual users can also provide their **own Apple Music Developer Token** through their Sync Settings.
+Normally playlist synchronization is **additive**. Matching tracks that are not already in the user's library can be added; existing library selections are not removed simply because they are missing from the playlist being synced.
 
-This is useful when:
+**One-for-One Playlist Mirror** is different. When enabled, the configured playlist defines which library selections remain, so tracks no longer represented by the playlist can be removed from that user's library. This changes the user's library references only; it does not delete the original audio from the master collection.
 
-* The administrator does not have an Apple Music Developer Token configured.
-* The administrator does not want to provide a global token.
-* A user wants to use their own Apple developer credentials.
-* A user needs or prefers to use a token associated with their own Apple developer account.
+Before applying a manual import, MILO previews tracks to add, tracks already in the library, and unmatched entries. Review ambiguous matches instead of assuming all provider data will match local metadata exactly. **Auto Sync** and its schedule are configured per user in Sync Settings. Spotify and Apple Music credentials can be set globally by the administrator or supplied by individual users; a user's own credentials take precedence for that user's sync.
 
-When a user has supplied their own Apple Music Developer Token, that token takes precedence for that user's Apple Music playlist synchronization.
+## Matching and Import Review
 
-The global administrator-configured token remains available for users who do not provide their own.
+Playlist text and provider metadata do not always use the same artist, title, album, or version names found in local audio files. MILO normalizes imported information and uses fuzzy matching to find likely catalog entries, but uncertain matches should be reviewed rather than assumed correct.
 
-### Apple Music Scraping — Fallback
+Manual import preview separates tracks to add, tracks already in the library, and unmatched entries. Unmatched items can be handled through Unmatched Logs, while Organizer Review compares embedded metadata on files that may belong in the master pool. A plain-text list gives the user more control over the artist/title values being matched, but a match still depends on useful metadata in the local catalog.
 
-When an Apple Music Developer Token is not configured, MILO can attempt to extract playlist information from Apple Music's web pages.
+## Unmatched Logs and Restore Tracks
 
-Like the Spotify scraper, this functionality is **not 100% reliable**.
+**Unmatched Logs** keeps entries MILO could not confidently match. Users can review possible catalog matches, link an entry to a correct track where appropriate, or skip an entry to history for later review. Supported actions can be inspected and undone. A future successful sync can clear an unmatched entry once it is resolved.
 
-Changes to Apple's website or the data embedded within its pages can cause the scraper to stop working or return incomplete playlist information.
+**Restore Tracks** lets users recover previous library selections without having to search the entire catalog and manually rebuild the selection. Restoring a selection creates the library reference again; it does not restore or recreate a deleted source audio file.
 
-The scraper is a fallback option, not a replacement for the official Apple Music API.
+## Music Organizer and Catalog Maintenance
 
-## YouTube Music
+MILO includes tools for maintaining the catalog as the master collection changes, as well as an organizer workflow for staging folders and files that need attention.
 
-MILO can import YouTube Music playlists through its current YouTube integration.
+### Quick Scan
 
-No YouTube API credential is currently required by MILO for this provider.
+**Quick Scan** checks the master collection for new or changed files and attempts to reconcile moved or upgraded catalog paths. If the catalog is empty or uninitialized, MILO falls back to the detailed scan path rather than assuming it can safely update an empty catalog incrementally. The Quick Scan schedule is configured in Scan Settings.
 
-Playlist information is extracted and then matched against the local music catalog.
+### Detailed Full Scan
 
-YouTube Music playlist data can sometimes differ from the artist/title information stored in a local music collection. If direct playlist importing does not produce the desired matches, exporting or converting the playlist to plain text and importing the text is another option.
+**Detailed Full Scan** performs a deeper recheck of the master collection, hashes files, refreshes catalog metadata and identity records, processes organizer staging folders, and reconciles moved or upgraded paths. Use it for initial catalog setup or when Quick Scan does not resolve a catalog issue. It can be run manually or scheduled separately in Scan Settings.
 
-## Fuzzy Matching
+### Dead Files
 
-Playlist services and local music collections do not always use identical naming.
+**Dead Files** checks catalog entries whose recorded source paths can no longer be found. When a verified replacement is available, the administrator can repair the catalog to point to it. Clearing a dead entry removes the stale catalog record; it is not a command to delete unrelated source files.
 
-For example:
+### Organizer Review
 
-```text
-Playlist:
-The Weeknd - Blinding Lights
+Administrators can configure multiple Dump Folders - Staging locations, optional user assignment for a dump folder, exempt folders, the Trash folder, a MusicBrainz Picard-style naming script, and whether the script should rename the audio files themselves in **Scan Settings**. If renaming is disabled, the script still controls the destination folders while the original filename is retained.
 
-Catalog:
-Blinding Lights
-Artist: The Weeknd
-```
+**Organizer Review** is where uncertain files and potential conflicts can be handled rather than automatically overwritten. Depending on the item, review actions can include approving a valid metadata-incomplete candidate, handling possible matches or duplicates, keeping both files, upgrading or overwriting a target where supported, keeping the candidate in the dump folder, or staging a file in Trash. Comparisons use the files' embedded metadata, including title, artist/album artist, album, and duration where available; track or disc number by itself is not enough to identify a song. When enabled, scheduled scans can auto-approve new metadata-approval items only when their destination is valid and conflict-free. Manual scans and existing pending review items are not automatically approved.
 
-MILO normalizes the imported information and uses fuzzy matching to locate the closest catalog entry.
-
-Matches that meet the current confidence threshold are treated as successful matches.
-
-Tracks that do not reach the required confidence are treated as failed matches rather than being silently added to the wrong track.
-
-## Match Failures
-
-When MILO cannot confidently match a playlist track, it records information about the failed match.
-
-This allows failed imports to be reviewed rather than silently disappearing.
-
-The failed-track interface can also provide possible matches from the local catalog, allowing the user to select the correct track when an appropriate match exists.
-
-## Import Review
-
-Playlist imports provide a review of the synchronization results.
-
-### Tracks to Add
-
-Tracks that matched the catalog and are not currently in the user's library.
-
-### Already in Library
-
-Tracks that successfully matched but are already part of the user's library.
-
-These tracks are left alone.
-
-### Match Failures
-
-Tracks that could not be confidently matched to the catalog.
-
-This allows the user to review what MILO found before adding the new selections.
-
-## Symlink Architecture
-
-The important distinction in MILO is between the **source collection** and a **user library**.
-
-For example:
-
-```text
-/music
-├── Artists
-│   ├── Artist A
-│   │   └── Album
-│   │       └── Track 01.flac
-│   └── Artist B
-│       └── Album
-│           └── Track 02.flac
-
-/milo-libraries
-├── alice
-│   └── Artist A
-│       └── Album
-│           └── Track 01.flac -> /music/Artists/Artist A/Album/Track 01.flac
-│
-└── bob
-    └── Artist B
-        └── Album
-            └── Track 02.flac -> /music/Artists/Artist B/Album/Track 02.flac
-```
-
-The same source file can therefore be represented in multiple user libraries without being copied multiple times.
-
-The resulting libraries can be used by compatible software such as Plex, Navidrome, or other applications that can work with the resulting filesystem structure.
-
-MILO itself is responsible for organizing the library, not playing the music.
-
-## Data Safety
-
-MILO's user-library operations are designed around references to the master collection.
-
-In particular:
-
-> Removing music from a user's MILO library must not delete the original music from the master collection.
-
-The source collection remains the authoritative location for the actual audio files.
-
-Removing a track from a user's library removes the user's selection and its corresponding library reference.
-
-It does not intentionally remove the source file.
-
-One-for-One Sync follows the same rule: even when a track is removed from a user's library because it is no longer present in the configured playlist, the original source file remains untouched.
+Quick Scan and Detailed Full Scan have separate schedules. MILO coordinates maintenance and sync jobs rather than intentionally running several heavy jobs concurrently; a due Detailed Full Scan takes priority, followed by Quick Scan, then user sync jobs. The main progress panel reports running and completed background tasks. Progress can be restored after a browser refresh while the same server process is still running. In-flight filesystem work is not resumed automatically after a server restart.
 
 ## Administration
 
-MILO includes an administrator interface for maintaining the catalog and managing users.
+The administrator interface includes tools to:
 
-Administrators can:
-
-* Manage user accounts.
-* Configure user library paths.
-* Select the user's linking mode.
-* Rescan the master music collection.
-* Scan for catalog entries whose source files no longer exist.
-* Remove dead catalog entries.
-* Configure the server-wide Auto Sync schedule.
+* Manage user accounts and switch account roles between user and admin.
+* Set each user's library path and Standard or Advanced linking mode.
+* Configure Quick Scan and Detailed Full Scan schedules.
+* Run scans and monitor progress.
+* Review and repair Dead Files.
+* Configure organizer folders, naming behavior, and review settings.
+* Configure global Spotify and Apple Music credentials when desired.
 
 ### Initial Administrator Account
 
-On the first startup, if no administrator exists, MILO creates an administrator account with:
+On the first startup, if the database does not already contain an administrator, MILO creates one with the following initial credentials:
 
 ```text
 Username: admin
 Password: admin
 ```
 
-**Change or secure this account before exposing MILO to an untrusted network.**
+**Change the initial password immediately** and do not expose a fresh installation with the default credentials to an untrusted network.
 
-The administrator library path can be configured using:
+## Requirements and Storage Safety
 
-```env
-ADMIN_LIBRARY_PATH=
-```
+MILO needs a master music collection that the server can read, persistent writable application data, and a location where it can create user-library links. A source installation needs Node.js/npm compatible with the release and its project dependencies; a container installation needs Docker and Compose. If you use the Organizer, the server also needs appropriate access to the configured staging folders, master-pool destination, and Trash folder because organizing may move or rename audio files.
 
-If it is not configured, the initial administrator library currently defaults to `Admin_Library` in the application's working directory.
+At minimum, the application needs permission to:
 
-## Requirements
+* Read audio files and their embedded metadata in the master collection.
+* Read and write its database and related catalog/history records.
+* Create user-library directories and create symbolic links in Standard Mode.
+* Create hard links in Advanced Mode, when the filesystem layout supports them.
+* Read and move staged audio files, create their planned destination folders, and rename files when the Organizer's rename option is enabled.
+* Move duplicate or replaced versions into the configured Trash folder and, only after an explicit review action, delete a file that is physically inside that Trash folder.
 
-MILO requires:
+### Important storage rules
 
-* A music collection accessible to the server.
-* A filesystem that supports symbolic links.
-* A location where MILO can create individual user library structures.
-* Appropriate filesystem permissions for the application.
-* User authentication for access to personal libraries.
+* **Keep the master collection and application data persistent.** In Docker, mount `./data` to `/app/data`; this keeps the main database, sync history, and organizer history across container replacement and upgrades. Keep a separate backup of the databases before significant upgrades or bulk review operations.
+* **Use container paths inside MILO.** Set `MASTER_POOL_DIR` and `LIBRARY_PATH` to paths as seen inside the container, and mount the corresponding host directories to those same locations. A host path such as `/mnt/music` is not automatically a valid in-container path unless it is mounted there.
+* **Use a separate, deliberate Trash location.** Duplicates and replaced files may be staged there for review. Do not treat Trash as a backup, and do not permanently delete staged files until you have confirmed that the retained master-pool copy is correct.
+* **Review Organizer changes before approving uncertain matches.** The Organizer can move or rename real source files as part of its configured workflow. Back up important files before the first run and check the naming script, staging folders, destination structure, and Trash path before enabling scheduled full scans.
+* **Understand the difference between library removal and Organizer operations.** Removing a user's selection removes their symbolic/hard link, not the original master-pool audio. Organizer move, rename, replace, and explicit delete actions are separate filesystem operations.
+* **Check hard-link compatibility before using Advanced Mode.** Source and destination must satisfy the operating system's hard-link rules and generally need to reside on the same filesystem/volume. Docker bind mounts, network shares, virtual filesystems, and separate volumes can prevent hard-link creation even if both paths appear inside the container.
+* **Keep sensitive files private.** Protect the `.env` file, database files, SSL private key, and user-specific Text Playlist API keys. Change the initial administrator password and set a strong `FLASK_SECRET_KEY` before exposing the service beyond a trusted network.
 
-For Advanced Mode:
-
-* The underlying filesystem must support hard links.
-* The source and destination must satisfy the filesystem's hard-link requirements.
-* StableBit DrivePool installations using Advanced Mode may require `DRIVEPOOL_DRIVES` to be configured.
-
-For Docker:
-
-* The master music collection must be mounted into the container.
-* User library locations must be mounted into the container.
-* The database should be stored in persistent storage.
-* The container must have the permissions required to read the master collection and create the selected type of filesystem links.
+Standard Mode is the recommended starting point unless your media application requires hard links or you have confirmed that your storage supports Advanced Mode. StableBit DrivePool users should also read the DrivePool section above; the physical-drive lookup does not remove hard-link filesystem requirements.
 
 ## Installation
 
-MILO can be run directly from source with Node.js/npm or deployed using the provided Docker image.
+MILO can run directly from source with Node.js/npm or be deployed using its Docker image. For release downloads, see [GitHub Releases](https://github.com/KenWeTech/MILO/releases); each release provides its source ZIP and release notes. The published container image is `ghcr.io/kenwetech/milo`.
 
 ### Run From Source
 
-Download the latest source `⁠MILO-vX.X.X.zip`⁠ archive from the [**Releases**](https://github.com/KenWeTech/MILO/releases) section and extract the contents of the zip file.
+1. Download and extract the laatest ⁠`MILO-vX.X.X.zip`⁠ archive from [GitHub Releases](https://github.com/KenWeTech/MILO/releases).
+2. Install the project dependencies from the project directory:
 
-Install the project's dependencies and start MILO with:
+   ```bash
+   npm install
+   ```
+3. Set the environment variables you need (see [Configuration](#configuration)).
+4. Start the server:
 
-```bash
-npm install
-npm start
-```
+   ```bash
+   npm start
+   ```
 
-The server listens on:
+The default port is `8088`, and the server listens on `0.0.0.0`. On a network where mDNS works, you may also be able to access MILO at `http://milo.local:8088`.
 
-```text
-http://0.0.0.0:8088
-```
+### Docker Compose
 
-If your network supports mDNS, you can also easily access your running instance by navigating to ⁠`http://milo.local:8088`⁠ in your browser.
-
-### Docker
-
-MILO is also distributed as a Docker image for users who prefer containerized deployment.
-
-The container needs access to the same resources as a source installation:
-
-```text
-┌─────────────────────────┐
-│       Host Storage      │
-│                         │
-│  Master Music Collection│
-│  User Library Directory │
-│  MILO Database          │
-└────────────┬────────────┘
-             │ mounted
-             ▼
-┌─────────────────────────┐
-│       MILO Container    │
-│                         │
-│  Catalog                │
-│  User Management        │
-│  Playlist Sync          │
-│  Library Linking        │
-└─────────────────────────┘
-```
-
-A Docker deployment should mount the following locations:
-
-* `/app/data` — MILO database and application data
-* `/userdir` — directory where MILO creates and manages user libraries
-* `/music` — master music collection
-
-For example:
+The container needs persistent storage for its database, a mounted master music collection, and a persistent location for the administrator library and the base directory used by relative library paths. A starting `compose.yaml` is shown below:
 
 ```yaml
 services:
@@ -572,239 +361,149 @@ services:
     image: ghcr.io/kenwetech/milo:latest
     container_name: milo
     restart: unless-stopped
-
     ports:
       - "8088:8088"
-
     env_file:
       - .env
-
-    volumes:
-      # MILO database and application data
-      - ./data:/app/data
-
-      # Admin library (only if admin wants to create their own)
-      - /path/to/admin/library:/app/Admin_Library
-
-      # User libraries created/managed by MILO
-      - /path/to/user/dir:/userdir
-
-      # Master music collection
-      - /path/to/your/music:/music
-
     environment:
+      PORT: 8088
       MASTER_POOL_DIR: /music
+      LIBRARY_PATH: /app/MILO_Libraries
+    volumes:
+      # MILO database, sync history, and organizer history
+      - ./data:/app/data
+      # Library root used by the initial admin and relative user-library paths
+      - ./MILO_Libraries:/app/MILO_Libraries
+      # Your existing master music collection (write access is needed by the Organizer)
+      - /path/to/your/music:/music
+      # Persist certificates when using MILO's built-in HTTPS
+      - ./ssl:/app/ssl
 ```
 
-Replace `/path/to/user/dir` with the host directory where you want MILO to create and manage user libraries. Replace `/path/to/your/music` with the location of your master music collection.
+Replace `/path/to/your/music` with the host directory containing the master music collection. Keep `./data`, `./MILO_Libraries`, and (when using built-in HTTPS) `./ssl` in persistent host storage so application history, user-library links, and certificates survive container replacement or upgrades. Ensure the container user has enough permission to read the master music and create library links.
 
-The host directory mapped to `/userdir` can be located wherever you store your MILO user libraries. MILO uses `/userdir` internally, so the host path does not need to match that name.
+**How `LIBRARY_PATH` works:** In this example, the initial administrator's library path is `/app/MILO_Libraries`. `LIBRARY_PATH` also serves as the base for relative library paths for other accounts. For example, entering `alice` as a user's relative library path resolves to `/app/MILO_Libraries/alice`. An absolute library path is used as given, so it must also exist and be accessible inside the container. The library root must be a persistent mount; otherwise a container replacement can discard its directory structure.
 
-The `./data:/app/data` mount keeps MILO's SQLite database and application data on persistent storage. This prevents the database from being lost when the container is recreated or updated.
-
-**Admin Library**: Docker users should not configure `ADMIN_LIBRARY_PATH` in env. MILO defaults the administrator library to `/app/Admin_Library` inside the container. Map that directory to persistent host storage through the Docker Compose file.
-
-If using Advanced Mode, pay particular attention to how the host storage is mounted into the container. Hard links cannot cross filesystems, and container volume mappings can change how those filesystems appear from inside the container. The master collection and user-library storage must be accessible from compatible filesystems for hard linking to work correctly.
-
-Once deployed via Docker, you can access the MILO interface via your host's IP address on port 8088, or using `⁠http://milo.local:8088`⁠ if your network environment supports mDNS broadcasting.
-
-## Configuration
-
-MILO uses environment variables for server configuration.
-
-Current configuration values include:
-
-| Variable                | Purpose                                                | Default                                              |
-| ----------------------- | ------------------------------------------------------ | ---------------------------------------------------- |
-| `FLASK_SECRET_KEY`      | Session secret used by the application                 | `change-this-to-a-random-secret`                     |
-| `DB_PATH`               | SQLite database location                               | `data/milo.db`                                       |
-| `MASTER_POOL_DIR`       | Master music collection location                       | `C:\Media\Music\MasterPool`                          |
-| `ADMIN_LIBRARY_PATH`    | Initial administrator library location                 | `Admin_Library` in the application working directory |
-| `SPOTIPY_CLIENT_ID`     | Global Spotify API client ID                           | Not configured                                       |
-| `SPOTIPY_CLIENT_SECRET` | Global Spotify API client secret                       | Not configured                                       |
-| `APPLE_DEVELOPER_TOKEN` | Global Apple Music API Developer Token                 | Not configured                                       |
-| `DRIVEPOOL_DRIVES`      | Physical DrivePool drives to inspect for Advanced Mode | Not configured                                       |
-
-Spotify and Apple Music credentials can also be supplied by individual users through their Sync Settings. User-provided credentials take precedence over the corresponding global credentials for that user.
-
-### Example
+Set a strong `FLASK_SECRET_KEY` in the `.env` file next to your Compose file. For example:
 
 ```env
-FLASK_SECRET_KEY=change-this-to-a-random-secret
-DB_PATH=data/milo.db
-
-MASTER_POOL_DIR=/music
-
-ADMIN_LIBRARY_PATH=/libraries/admin
-
+FLASK_SECRET_KEY=replace-with-a-long-random-secret
 SPOTIPY_CLIENT_ID=
 SPOTIPY_CLIENT_SECRET=
-
 APPLE_DEVELOPER_TOKEN=
-
 DRIVEPOOL_DRIVES=
 ```
 
-Paths should be changed to match the filesystem layout of the host or container.
+You do not need to set `DB_PATH` for the Compose example above; it defaults to the app's `data/milo.db` path, which is persisted by `./data:/app/data`. MILO also stores `sync_history.db` beside the configured main database, so keeping the database directory persistent preserves that history too.
 
-## Important Configuration Notes
+When accessing MILO from the host, open `http://localhost:8088`. On another device, use the server's LAN address and port. `http://milo.local:8088` may work if mDNS announcements are available across your network and Docker setup.
 
-### Session Secret
+#### DrivePool and Docker
 
-Do not use the built-in default session secret for a production deployment.
+The DrivePool physical-path lookup uses configured Windows drive letters and `PoolPart.*` folders. A typical Linux-based container cannot directly use host Windows drive letters such as `D:` or `E:`. Configure `DRIVEPOOL_DRIVES` only in a deployment where those paths are actually visible in the MILO process; do not copy Windows drive letters into a Linux container and expect the lookup to work. Hard links still need compatible physical storage and permissions.
 
-Set:
+## Configuration
+
+MILO reads optional environment variables at startup. Only set the values needed for your deployment. In examples, forward slashes are used for paths; on Windows, forward-slash paths are accepted for absolute library paths as well.
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `PORT` | Port used by the web server | `8088` |
+| `FLASK_SECRET_KEY` | Secret used to sign session cookies | Built-in development fallback; set your own |
+| `DB_PATH` | Main SQLite database location | `data/milo.db` under the application directory |
+| `MASTER_POOL_DIR` | Existing master music collection to index | `C:/Media/Music/MasterPool` |
+| `LIBRARY_PATH` | Library root used for the initial admin library path and as the base for other users' relative library paths | Set explicitly for your deployment; the Docker example uses `/app/MILO_Libraries` |
+| `SPOTIPY_CLIENT_ID` | Global Spotify API client ID | Not configured |
+| `SPOTIPY_CLIENT_SECRET` | Global Spotify API client secret | Not configured |
+| `APPLE_DEVELOPER_TOKEN` | Global Apple Music Developer Token | Not configured |
+| `DRIVEPOOL_DRIVES` | Comma-separated physical DrivePool member drive letters, e.g. `D:,E:,F:` | Not configured |
+| `USE_SSL` | Use MILO's built-in HTTPS server when set to `true` | `false` |
+| `SSL_KEY_PATH` | Optional path to the HTTPS private key | `ssl/milo.key` under the application directory |
+| `SSL_CERT_PATH` | Optional path to the HTTPS certificate | `ssl/milo.crt` under the application directory |
+
+Set `LIBRARY_PATH` explicitly, especially in Docker, so the administrator's initial library and relative user-library paths resolve to a persistent location. The administrator's initial library path is set to this root; relative paths for other users are resolved beneath it. Absolute user-library paths are accepted too, but those locations must exist and be accessible to MILO.
+
+Changing `LIBRARY_PATH` later does not automatically rewrite library paths already saved in the database. Review and update existing paths through **Manage Users** when moving an installation or changing the library layout.
+
+Example `.env` values for the Docker layout above:
 
 ```env
-FLASK_SECRET_KEY=
+FLASK_SECRET_KEY=replace-with-a-long-random-secret
+MASTER_POOL_DIR=/music
+LIBRARY_PATH=/app/MILO_Libraries
+SPOTIPY_CLIENT_ID=
+SPOTIPY_CLIENT_SECRET=
+APPLE_DEVELOPER_TOKEN=
+DRIVEPOOL_DRIVES=
 ```
 
-to a strong random value.
+For Docker, use the container paths from the Compose example. For a source installation, set `MASTER_POOL_DIR` and `LIBRARY_PATH` to real paths on the host instead; `/music` and `/app/MILO_Libraries` are specific to the example container layout.
 
-### Master Music Collection
+## SSL Configuration and PWA Support
 
-The master collection must be accessible to the MILO process.
+MILO can serve HTTPS itself or run behind a reverse proxy. Use one method at a time. The PWA's service worker and offline behavior require a secure, trusted browser origin; clicking through a certificate warning alone is not enough on many browsers.
 
-Set:
+### Reverse Proxy (Recommended for HTTPS)
+
+If you use Caddy, Traefik, Nginx Proxy Manager, or another reverse proxy, leave `USE_SSL` unset or set it to `false`. The proxy should handle HTTPS and present a certificate trusted by the devices that access MILO. Connect the proxy to MILO over its internal HTTP port. In this setup, MILO does not need to serve its own SSL certificate.
+
+### MILO's Built-In HTTPS
+
+For direct HTTPS access, set:
 
 ```env
-MASTER_POOL_DIR=
+USE_SSL=true
 ```
 
-to the location containing the original music.
+MILO looks for the key at `ssl/milo.key` and the certificate at `ssl/milo.crt` by default. You can change their locations with `SSL_KEY_PATH` and `SSL_CERT_PATH`. If either file is missing, MILO attempts to generate a self-signed certificate. If certificate generation fails, MILO logs the problem and starts in HTTP mode instead.
 
-MILO recursively scans this directory when an administrator performs a master-pool scan.
+#### Docker Built-In HTTPS: Keep and Use the Generated Files
 
-### User Library Paths
-
-Each user has their own library path.
-
-These paths determine where MILO creates the user's filesystem library.
-
-For Docker installations, the library path entered in the MILO user-management interface **must start with `/userdir/`**.
-
-For example:
+The Compose example mounts `./ssl:/app/ssl`. Keep this mount if you want the generated files to survive container replacement. With `USE_SSL=true`, start MILO once; the first startup creates the certificate files in the host's `./ssl` directory when they do not already exist:
 
 ```text
-/userdir/alice
-/userdir/bob
-/userdir/charlie
+./ssl/milo.crt   # certificate to install/trust on client devices
+./ssl/milo.key   # private key; keep this on the server and never distribute it
 ```
 
-The `/userdir/` path refers to the directory mapped into the container through the Docker volume configuration. Do not enter the host filesystem path in the MILO interface.
+Then access MILO over HTTPS using the hostname covered by the certificate. The auto-generated certificate is created for `milo.local`, so start by testing `https://milo.local:8088`. Avoid the raw IP address unless the certificate was issued for that IP address. If the browser reports a hostname mismatch, use a certificate containing the exact hostname in its Subject Alternative Name (SAN), or use a trusted reverse proxy; trusting a certificate does not correct a hostname mismatch.
 
-For example, with:
+#### Trust the Certificate So the PWA Works
 
-```yaml
-volumes:
-  - /mnt/storage/milo-users:/userdir
-```
+A self-signed certificate encrypts the connection but is not automatically trusted by other devices. Copy **only `milo.crt`** from the server's `ssl` folder to each phone, tablet, or computer that will use MILO, then install it as a trusted certificate/authority using that device's certificate or security settings. For example:
 
-the library path entered in MILO should be:
+* **Windows:** import `milo.crt` into the appropriate Trusted Root Certification Authorities store.
+* **macOS:** import it into Keychain Access, open the certificate's trust settings, and set it to Always Trust for the intended use.
+* **iPhone/iPad:** install the certificate profile, then enable full trust for it under **Settings → General → About → Certificate Trust Settings**.
+* **Android:** use the device's **Security / Encryption & credentials** settings to install the certificate; wording and support vary by Android version and device manufacturer.
 
-```text
-/userdir/alice
-```
+After trusting the certificate, reopen the exact HTTPS hostname in the browser and confirm it no longer reports an untrusted connection before installing or using the PWA. Browsers may still reject a self-signed certificate that lacks the correct hostname/SAN, even if the certificate is installed. For the most predictable PWA experience, use a trusted certificate whose SAN matches the address users will open.
 
-not:
-
-```text
-/mnt/storage/milo-users/alice
-```
-
-This is important for Docker deployments because MILO operates on the filesystem as it appears **inside the container**. Using the host-side path in the MILO interface can cause library creation and linking operations to fail.
-
-For non-Docker installations, use the actual filesystem path accessible to the MILO server.
-
-The library contains links to the master collection rather than independent copies of the audio files.
-
-### Database
-
-MILO currently uses SQLite.
-
-The database stores information including:
-
-* Users
-* Catalog entries
-* User track selections
-* Playlist synchronization settings
-* Unmatched-track logs
-
-Keep the database file persistent when running MILO in Docker.
-
-## Storage & Permissions
-
-MILO needs filesystem access appropriate to the operations being performed.
-
-At minimum, the application needs to be able to:
-
-* Read the master music collection.
-* Read music metadata.
-* Create user library directories.
-* Create symbolic links in Standard Mode.
-* Create hard links in Advanced Mode.
-
-When using Docker, filesystem permissions are especially important.
-
-A container that can read the music collection but cannot create links in the target library location will not be able to build user libraries correctly.
-
-Advanced Mode has additional filesystem restrictions and should only be enabled when the storage layout is known to support hard links.
-
-## Catalog Maintenance
-
-The catalog is a database-backed index of the master music collection.
-
-When the master collection changes, an administrator can use **Rescan Master Pool** to update the catalog.
-
-MILO also provides a **Dead Files** check.
-
-Dead catalog entries are catalog records whose source files can no longer be found at their stored paths.
-
-Administrators can review these entries before removing them from the database.
-
-The dead-file cleanup process is intended to clean up stale catalog records without deleting the original music files that still exist.
+Keep `milo.key` private. Do not upload it to client devices or share it with users. The `.crt` file is the public certificate; the `.key` file authorizes the server to present it.
 
 ## Security Considerations
 
-MILO is intended for self-hosted environments.
-
-Before exposing the application outside a trusted network:
+MILO is intended for self-hosted environments. Before exposing it outside a trusted network:
 
 * Change the default administrator password.
-* Set a strong `FLASK_SECRET_KEY`.
-* Protect the application with appropriate network controls.
-* Ensure the application has only the filesystem permissions it actually needs.
-* Keep the database and configuration files protected.
-* Be careful when granting MILO write access to music-library locations.
+* Set a strong `FLASK_SECRET_KEY`; do not use the built-in fallback for a deployment you care about.
+* Use appropriate firewall and network controls, especially if the server is reachable outside your home or organization.
+* Grant MILO only the filesystem permissions it needs to read the music and manage the configured library directories.
+* Keep the database, `.env` file, SSL private key, and user-specific Text Playlist API keys protected.
+* Be careful when giving organizer features write access to staging, master-pool, and Trash locations.
 
-MILO is designed so that removing a user's library selection does not intentionally delete the underlying source music.
-
-## What MILO Is Not
-
-MILO is **not intended to be a music player**.
-
-It is the catalog and library organization layer around an existing music collection.
-
-It does not replace the software you already use to play your music.
-
-Instead, MILO makes it easier to create and maintain the particular library you want from a larger collection.
-
-The resulting user libraries can then be used by compatible music-server or media-management software.
+Removing a track from a user's library is intended to remove the user's link, not the original music from the master collection. Organizer and catalog-maintenance actions are separate from library selection; review file-operation prompts and destinations carefully before applying them.
 
 ## Current Limitations
 
-MILO is under active development.
+Keep these limitations in mind:
 
-In particular:
+* Spotify's webpage/scraping fallback can be limited to around 200 tracks.
+* Direct playlist imports from Spotify, YouTube Music, and Apple Music depend on data exposed by the external services. Changes to a provider's website, API, access rules, or response format can make an import incomplete or cause it to stop working. The saved Personal Text Playlist is not dependent on those provider connections, although matching its artist/title entries still depends on the local catalog metadata.
+* Artist, title, album, and version values from a playlist may not match embedded tags exactly. Fuzzy matching can fail or suggest an imperfect match, so review ambiguous or unmatched entries.
+* Standard Mode depends on the media application's handling of symbolic links. Advanced Mode depends on hard-link support and compatible filesystem/volume layout.
+* StableBit DrivePool lookup requires the configured physical drive paths and matching `PoolPart.*` files to be available to the MILO process.
+* Docker deployments require correct volume mappings and filesystem permissions. mDNS discovery of `milo.local` may not work through every router, VLAN, or Docker network.
+* Background work can be tracked after refreshing the page while the same server process is running, but in-flight jobs are not resumed automatically after the server is restarted.
 
-* Spotify web scraping is not guaranteed to remain reliable, may limit around 200 results.
-* Apple Music web scraping is not guaranteed to remain reliable.
-* Plain Text Playlists converted from **TuneMyMusic** is highly recommended right now for all music services to prevent errors or missing tracks.
-* Playlist matching is based on metadata and fuzzy matching, so incorrect, incomplete, or ambiguous metadata can result in failed or imperfect matches.
-* YouTube Music playlist information may sometimes produce different or less useful matching data than a plain-text playlist export.
-* Advanced Mode depends on filesystem support for hard links.
-* Plex and other media applications may handle symbolic links differently; Plex may require Advanced Mode for MILO-generated libraries to be discovered correctly.
-* Docker deployments require correct volume mappings and filesystem permissions, particularly when using Advanced Mode.
-* Playlist provider integrations and scraping behavior may change as external services change their websites or APIs.
-
-The scraping implementations are fallback functionality and should not be considered equivalent in reliability to the official APIs.
+See [GitHub Issues](https://github.com/KenWeTech/MILO/issues) for known problems and [GitHub Releases](https://github.com/KenWeTech/MILO/releases) for the source ZIP, and release notes. See [Github Packages](https://github.com/KenWeTech/MILO/pkgs/container/milo) for available Docker images.

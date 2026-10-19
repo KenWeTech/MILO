@@ -276,18 +276,16 @@
     <div id="system-alert-modal" class="fixed z-[100] inset-0 bg-[#000000]/80 backdrop-blur-sm items-center justify-center hidden p-4 sm:p-6">
         <div class="bg-[#000012] border border-[#2a2e43] rounded-2xl w-full max-w-sm shadow-2xl flex flex-col p-6 text-center transform transition-all">
             <div id="alert-icon-container" class="mx-auto flex items-center justify-center h-12 w-12 rounded-full mb-4 bg-[#330816]">
-
                 <svg id="alert-icon-error" class="h-6 w-6 text-[#ff80a8] hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
                 </svg>
-
                 <svg id="alert-icon-success" class="h-6 w-6 text-[#00BBFC] hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
                 </svg>
             </div>
             <h3 id="alert-modal-title" class="text-lg font-bold text-[#00BBFC] mb-2">Notification</h3>
             <p id="alert-modal-msg" class="text-sm text-[#b4b7c5] mb-6">Message goes here.</p>
-
+            
             <div id="alert-actions-error" class="hidden flex-col-reverse sm:flex-row justify-center gap-3 w-full">
                 <button onclick="closeAppAlert()" class="w-full sm:w-auto px-5 py-2.5 bg-[#1d202f] hover:bg-[#2a2e43] border border-[#2a2e43] text-[#f1f2f6] rounded-lg text-sm font-medium transition-colors">Dismiss</button>
                 <button onclick="forceRefreshCheck()" id="btn-force-refresh" class="w-full sm:w-auto px-5 py-2.5 bg-[#2C53CA] hover:bg-[#2B66FD] text-[#ffffff] rounded-lg text-sm font-semibold shadow-lg shadow-[#004475]/20 transition-all active:scale-95">Refresh</button>
@@ -327,7 +325,6 @@
                     <span class="inline-block w-3.5 h-3.5 border-2 border-[#216281] border-t-[#00BBFC] rounded-full animate-spin"></span>
                     Loading current scan settings…
                 </div>
-
                 <div class="bg-[#000000] p-4 rounded-xl border border-[#2a2e43]">
                     <label for="sys-incremental-scan-interval" class="block text-xs font-semibold text-[#00BBFC] uppercase tracking-wider mb-1">Quick Scan Schedule</label>
                     <p class="text-xs text-[#7a7d90] mb-3">A faster pass checks pool paths, file sizes, and modification times. New or changed files are hashed and have their embedded metadata refreshed; matching dead catalog paths are then checked for recovery. Files whose contents changed while preserving both size and timestamp require a detailed full scan.</p>
@@ -438,7 +435,6 @@
         </div>
     </div>
 
-    <!-- Organizer Review Modal -->
     <div id="organizer-review-modal" class="fixed z-[95] inset-0 bg-[#000000]/80 backdrop-blur-sm items-center justify-center hidden p-4 sm:p-6">
         <div class="bg-[#000012] border border-[#216281] rounded-2xl w-full max-w-6xl shadow-2xl flex flex-col max-h-[94vh] overflow-hidden">
             <div class="p-5 border-b border-[#216281] flex justify-between items-center bg-[#000012] gap-3">
@@ -515,7 +511,6 @@
         </div>
     </div>
 
-    <!-- User Manager Modal -->
     <div id="user-manager-modal" class="fixed z-[90] inset-0 bg-[#000000]/80 backdrop-blur-sm items-center justify-center hidden p-4 sm:p-6">
         <div class="bg-[#000012] border border-[#216281] rounded-2xl w-full max-w-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
             <div class="p-5 border-b border-[#216281] flex justify-between items-center bg-[#000012]">
@@ -526,7 +521,6 @@
             </div>
 
             <div class="p-6 overflow-y-auto space-y-6">
-                <!-- Create/Edit Form -->
                 <div class="bg-[#000000] p-4 rounded-xl border border-[#2a2e43]">
                     <h4 id="user-form-title" class="text-xs font-semibold text-[#00BBFC] uppercase tracking-wider mb-4">Add New User</h4>
                     <form id="user-form" onsubmit="handleUserFormSubmit(event)" class="space-y-4">
@@ -572,7 +566,6 @@
                     </form>
                 </div>
 
-                <!-- Existing Users List -->
                 <div>
                     <h4 class="text-xs font-semibold text-[#b4b7c5] uppercase tracking-wider mb-3">Registered Users</h4>
                     <div class="overflow-x-auto bg-[#000000] rounded-xl border border-[#2a2e43]">
@@ -594,7 +587,6 @@
         </div>
     </div>
 
-    <!-- Dead Files Modal -->
     <div id="dead-files-modal" class="fixed z-[90] inset-0 bg-[#000000]/80 backdrop-blur-sm items-center justify-center hidden p-4 sm:p-6">
         <div class="bg-[#000012] border border-[#216281] rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
             <div class="p-5 border-b border-[#216281] flex justify-between items-center bg-[#000012]">
@@ -625,7 +617,6 @@
         </div>
     </div>
 
-    <!-- Import Modal -->
     <div id="import-modal" class="fixed z-[90] inset-0 bg-[#000000]/80 backdrop-blur-sm items-center justify-center hidden p-4 sm:p-6">
         <div class="bg-[#000012] border border-[#216281] rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
             <div class="p-5 border-b border-[#216281] flex justify-between items-center bg-[#000012]">
@@ -696,7 +687,6 @@
         </div>
     </div>
 
-    <!-- Sync Settings Modal -->
     <div id="sync-settings-modal" class="fixed z-[90] inset-0 bg-[#000000]/80 backdrop-blur-sm items-center justify-center hidden p-4 sm:p-6">
         <div class="bg-[#000012] border border-[#216281] rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
             <div class="p-5 border-b border-[#216281] flex justify-between items-center bg-[#000012]">
@@ -792,7 +782,6 @@
         </div>
     </div>
 
-    <!-- Removed Logs / Restore Tracks Modal -->
     <div id="removed-logs-modal" class="fixed z-[90] inset-0 bg-[#000000]/80 backdrop-blur-sm items-center justify-center hidden p-4 sm:p-6">
         <div class="bg-[#000012] border border-[#216281] rounded-2xl w-full max-w-xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
             <div class="p-5 border-b border-[#216281] flex justify-between items-center bg-[#000012]">
@@ -817,7 +806,6 @@
         </div>
     </div>
 
-    <!-- Missing Track Logs Modal -->
     <div id="missing-logs-modal" class="fixed z-[90] inset-0 bg-[#000000]/80 backdrop-blur-sm items-center justify-center hidden p-4 sm:p-6">
         <div class="bg-[#000012] border border-[#216281] rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
             <div class="p-5 border-b border-[#216281] flex justify-between items-center bg-[#000012]">
@@ -861,7 +849,6 @@
         </div>
     </div>
 
-    <!-- Unmatched Track Log History Modal -->
     <div id="missing-logs-history-modal" class="fixed z-[90] inset-0 bg-[#000000]/80 backdrop-blur-sm items-center justify-center hidden p-4 sm:p-6">
         <div class="bg-[#000012] border border-[#216281] rounded-2xl w-full max-w-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
             <div class="p-5 border-b border-[#216281] flex justify-between items-center bg-[#000012]">
@@ -877,7 +864,6 @@
         </div>
     </div>
 
-    <!-- Job Results Modal -->
     <div id="job-results-modal" class="fixed z-[90] inset-0 bg-[#000000]/80 backdrop-blur-sm items-center justify-center hidden p-4 sm:p-6">
         <div class="bg-[#000012] border border-[#216281] rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
             <div class="p-5 border-b border-[#216281] flex justify-between items-center bg-[#000012]">
@@ -948,9 +934,6 @@
             'removed-logs-modal', 'missing-logs-modal', 'missing-logs-history-modal', 'job-results-modal'
         ];
 
-        // Only one async modal may own the screen at a time. Showing a modal is
-        // immediate; async responses carry a generation token so a slow older
-        // request cannot reopen itself over a newer modal.
         function showManagedModal(modalId, loadingContainerId = null, loadingText = 'Loading...') {
             modalRequestGeneration++;
             activeManagedModalId = modalId;
@@ -1024,32 +1007,27 @@
             let modalMsg = "";
             let isOk = false;
 
-            // 1. Handled JSON response objects: showAlert(res) or Error objects: showAlert(err)
             if (typeof title === 'object' && title !== null) {
                 if (title instanceof Error) {
                     isOk = false;
                     modalMsg = title.message;
                     modalTitle = "Error";
                 } else {
-                    // Strictly check success === true
                     isOk = title.success === true;
                     modalMsg = title.message || title.msg || title.error || JSON.stringify(title);
                     modalTitle = title.title || (isOk ? "Success" : "Error");
                 }
             } 
-            // 2. Handle the 2-argument form: showAlert("Settings saved!", true)
             else if (typeof message === 'boolean') {
                 isOk = message;
                 modalMsg = title || "";
                 modalTitle = isOk ? "Success" : "Error";
             }
-            // 3. Handled 3 arguments with explicit boolean: showAlert("Title", "Message", true)
             else if (typeof isSuccess === 'boolean' || typeof isSuccess === 'string') {
                 isOk = (isSuccess === true || isSuccess === 'true');
                 modalTitle = title || (isOk ? "Success" : "Error");
                 modalMsg = message || "";
             }
-            // 4. Handled single string argument: showAlert("Master pool directory not found.")
             else if (message === undefined && isSuccess === undefined) {
                 modalMsg = title || "";
                 const hasErrorWord = /error|fail|invalid|unauthorized|exception|cannot|could not|not found|missing|denied|unable/i.test(modalMsg);
@@ -1057,7 +1035,6 @@
                 isOk = hasSuccessWord && !hasErrorWord;
                 modalTitle = isOk ? "Success" : "Error";
             }
-            // 5. Fallback for 2 string args without boolean: showAlert("Scan", "Master pool directory not found.")
             else {
                 modalTitle = title || "Notification";
                 modalMsg = message || "";
@@ -1067,7 +1044,6 @@
                 isOk = hasSuccessWord && !hasErrorWord;
             }
 
-            // DOM Updates
             const modal = document.getElementById('system-alert-modal');
             const titleEl = document.getElementById('alert-modal-title');
             const msgEl = document.getElementById('alert-modal-msg');
@@ -1145,7 +1121,6 @@
                     page: currentPage
                 }));
             } catch (_) {
-                // Catalog preferences are optional; private browsing may block storage.
             }
         }
 
@@ -1297,8 +1272,6 @@
         function resetPageAndLoad() { currentPage = 1; loadCatalog(); }
         function handleSortByChange() {
             currentPage = 1;
-            // Recently added has always meant newest first when selected. Users can
-            // still manually switch the order afterward with the order selector.
             if (document.getElementById('sort-by').value === 'added') {
                 document.getElementById('sort-order').value = 'desc';
             }
@@ -1356,21 +1329,16 @@
             }
         }
 
-        // The main-page action is the fast incremental scan. If the catalog/index is empty,
-        // the server automatically falls back to the detailed full scan.
         function startManualScan() {
             startCatalogScan('/api/catalog/quick-scan', 'Starting quick scan...');
         }
 
-        // The detailed full scan is available from Scan Settings rather than the main page.
         function startFullMasterScan() {
             closeScanSettingsModal();
             startCatalogScan('/api/catalog/scan', 'Starting detailed full catalog and organizer scan...');
         }
 
         function startCatalogScan(endpoint, initialMessage) {
-            // Every click reaches the server queue. The shared progress panel follows the
-            // task requested here; the Work Queue panel continues showing any task already running.
             if (masterScanStatusPollInterval) clearInterval(masterScanStatusPollInterval);
             masterScanStatusPollInterval = null;
             if (importStatusPollInterval) clearInterval(importStatusPollInterval);
@@ -1423,8 +1391,6 @@
         }
 
         function pollScanStatus(suppressCompletionAlert = false, queueId = null) {
-            // Scans are admin-only. This client guard complements the server-side
-            // authorization on both scan-status and individual queue-task endpoints.
             if (!currentViewerIsAdmin) return;
             const container = document.getElementById('job-progress-container');
             if (!container) return;
@@ -1455,8 +1421,6 @@
                         const reviewButton = document.getElementById('job-review-btn');
                         const quickScanRequested = /new\/changed-song scan|quick scan/i.test(String(data.trigger || ''));
                         const openReview = data.status === 'completed' && data.type !== 'incremental' && !quickScanRequested;
-                        // Dismiss already exists in the action row; hide the review action
-                        // completely for quick/incremental scans instead of duplicating it.
                         reviewButton.classList.toggle('hidden', !openReview);
                         if (openReview) {
                             reviewButton.innerText = 'Open Organizer Review';
@@ -1487,7 +1451,6 @@
             masterScanStatusPollInterval = setInterval(poll, 1000);
         }
 
-        // Scan Settings Modal & Handlers
         function openScanSettings() {
             const modalToken = showManagedModal('scan-settings-modal');
             document.getElementById('scan-settings-loading').classList.remove('hidden');
@@ -1585,7 +1548,7 @@
 
                 const row = document.createElement('div');
                 row.className = 'flex flex-col sm:flex-row items-start sm:items-center justify-between bg-[#000012] p-2.5 rounded-lg border border-[#2a2e43] text-xs gap-2';
-
+                
                 let userOptions = `<option value="" ${!taggedUserId ? 'selected' : ''}>Unassigned / Global</option>`;
                 systemUsersList.forEach(u => {
                     userOptions += `<option value="${u.id}" ${taggedUserId == u.id ? 'selected' : ''}>${escapeHtml(u.username)}</option>`;
@@ -1661,7 +1624,6 @@
             });
         }
 
-        // Organizer Run, Progress, and Review Logic
         function startOrganizerRun() {
             showOrganizerProgressPanel({ status: 'running', progress: 0, total: 0, message: 'Starting organizer...' });
             fetch('/api/admin/organizer/run', { method: 'POST' })
@@ -1848,7 +1810,6 @@
                             if (item.matched_exists && item.is_quality_upgrade) {
                                 actions += `<button onclick="resolveOrganizerReview(${item.id}, 'upgrade')" class="px-3 py-2 rounded-lg bg-[#1A76C9] hover:bg-[#0092FC] text-xs font-semibold">Upgrade Pool Version</button>`;
                             } else if (item.matched_exists && item.can_overwrite) {
-                                // Keep the explicit admin override for meaningful possible matches.
                                 actions += `<button onclick="resolveOrganizerReview(${item.id}, 'overwrite')" class="px-3 py-2 rounded-lg bg-[#713CCC] hover:bg-[#8A48FF] text-xs font-semibold">Overwrite Pool Song</button>`;
                             }
                             if (item.kind !== 'duplicate') {
@@ -2054,7 +2015,6 @@
             .catch(() => showAlert('Organizer Error', 'Could not contact the organizer review endpoint.', false));
         }
 
-        // User Manager Modal Logic
         function openUserManager() {
             showManagedModal('user-manager-modal');
             loadUsersList();
@@ -2189,8 +2149,6 @@
                         libraryPathStatusPollInterval = null;
                         if (job.task === 'user-delete' || job.task === 'library-path-migration') {
                             loadUsersListIfOpen();
-                            // A prior completed scan may still be the server's globally
-
                             fetch('/api/catalog/scan-status', { cache: 'no-store' })
                                 .then(r => r.ok ? r.json() : null)
                                 .then(scan => {
@@ -2368,7 +2326,7 @@
                         const result = job.result || {};
                         const summary = job.task === 'dead-files-purge'
                             ? `${job.message}${job.status === 'completed' ? ` Cleared ${Number(result.purged) || 0} catalog entr${Number(result.purged) === 1 ? 'y' : 'ies'}.` : ''}`
-                            : `${job.message}${Array.isArray(result.items) ? '\n' + result.items.filter(item => !item.success).slice(0, 5).map(item => `
+                            : `${job.message}${Array.isArray(result.items) ? '\n' + result.items.filter(item => !item.success).slice(0, 5).map(item => `#${item.id}: ${item.message}`).join('\n') : ''}`;
                         if (!suppressCompletionAlert) showAlert('Dead Files', summary, job.status === 'completed' && !(Number(result.failed) > 0));
                     }
                 } catch (error) {
@@ -2462,7 +2420,6 @@
         }
 
         function toggleJobQueueDetails(event) {
-
             if (event) {
                 event.preventDefault();
                 event.stopPropagation();
@@ -2494,7 +2451,6 @@
                 const response = await fetch('/api/job-queue', { cache: 'no-store' });
                 if (!response.ok) return;
                 const data = await response.json();
-
                 const tasks = (Array.isArray(data.tasks) ? data.tasks : [])
                     .filter(task => currentViewerIsAdmin || task.ownedByViewer === true);
                 const panel = document.getElementById('job-queue-panel');
@@ -2538,7 +2494,6 @@
                     : 'A task is running';
                 const currentTask = tasks.find(task => task.status === 'running');
                 const focusedTaskIsDifferent = !!(activeProgressQueueId && currentTask && activeProgressQueueId !== currentTask.id);
-
                 if (currentTask && currentTask.kind === 'scan' && currentViewerIsAdmin && !currentTask.scheduled && !masterScanStatusPollInterval && activeProgressJobType !== 'import' && !focusedTaskIsDifferent) {
                     activeProgressQueueId = currentTask.id;
                     pollScanStatus(true, currentTask.id);
@@ -2576,7 +2531,6 @@
                 }).join('');
                 if (jobQueueExpanded) positionJobQueuePanel();
             } catch (_) {
-
             } finally {
                 queueRefreshInFlight = false;
             }
@@ -2814,7 +2768,6 @@
                         refreshJobQueue();
                     }
                 } catch (error) {
-
                     if (reviewWhenDone && importPreviewMode) {
                         document.getElementById('import-progress-status').innerText = 'Connection interrupted while checking progress. Retrying...';
                     }
@@ -3671,7 +3624,6 @@
                         break;
                 }
             } catch (_) {
-
             }
         }
 
@@ -3688,7 +3640,6 @@
                 setInterval(() => {
                     if (organizerStatusPollInterval || activeProgressJobType === 'import') return;
                     fetch('/api/admin/organizer/status').then(r => r.json()).then(data => {
-
                         if (data.status === 'running' && !data.nestedInScan) pollOrganizerStatus();
                     }).catch(() => {});
                 }, 3000);
@@ -3772,7 +3723,6 @@
 
             serverReachable = response.status < 500;
         } catch (_) {
-
         } finally {
             window.clearTimeout(timeoutId);
             connectionCheckInProgress = false;

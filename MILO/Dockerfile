@@ -1,3 +1,4 @@
+
 FROM node:22-bookworm-slim AS base
 
 ENV PUPPETEER_CACHE_DIR=/app/.cache/puppeteer
@@ -8,7 +9,9 @@ COPY package*.json ./
 
 FROM base AS dependencies
 
-RUN npm install --omit=dev
+RUN npm install --omit=dev \
+    && npx puppeteer browsers install chrome \
+    && node -e 'const fs = require("node:fs"); const p = require("puppeteer"); const executable = p.executablePath(); console.log("Puppeteer Chrome:", executable); if (!fs.existsSync(executable)) throw new Error("Puppeteer Chrome was not installed");'
 
 FROM base AS final
 
@@ -50,10 +53,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN mkdir -p data
 
+COPY . .
+
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY --from=dependencies /app/.cache/puppeteer /app/.cache/puppeteer
 
-COPY . .
+RUN node -e 'const fs = require("node:fs"); const p = require("puppeteer"); const executable = p.executablePath(); console.log("Final image Chrome:", executable); if (!fs.existsSync(executable)) throw new Error("Puppeteer Chrome is missing from the final image");'
 
 EXPOSE 8088
 

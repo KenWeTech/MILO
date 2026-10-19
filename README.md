@@ -282,6 +282,16 @@ Administrators can configure multiple Dump Folders - Staging locations, optional
 
 Quick Scan and Detailed Full Scan have separate schedules. MILO coordinates maintenance and sync jobs rather than intentionally running several heavy jobs concurrently; a due Detailed Full Scan takes priority, followed by Quick Scan, then user sync jobs. The main progress panel reports running and completed background tasks. Progress can be restored after a browser refresh while the same server process is still running. In-flight filesystem work is not resumed automatically after a server restart.
 
+### Work Queue and Progress Tracking
+
+MILO coordinates background tasks through a shared work queue to prevent heavy maintenance and synchronization jobs from unnecessarily competing for system resources.
+
+The Work Queue indicator shows running and waiting tasks and provides additional information about their status. Regular users can see their own tasks and queue position without seeing other users' job details or administrator-only scans. Administrators can monitor the broader queue and manage maintenance tasks.
+
+Scheduled scans and manually started scans are handled separately. Scheduled maintenance can be monitored through the queue, while the main progress panel is intended for the user's own manually initiated work rather than automatically displaying the results of a scheduled full scan.
+
+Queue position reflects the order in which work is waiting to run. MILO prioritizes Detailed Full Scans, followed by Quick Scans and then user synchronization jobs. Queue status and progress can be restored after a browser refresh while the same server process remains running; in-flight filesystem work is not automatically resumed after a server restart.
+
 ## Administration
 
 The administrator interface includes tools to:
@@ -498,7 +508,6 @@ Removing a track from a user's library is intended to remove the user's link, no
 
 Keep these limitations in mind:
 
-* Spotify's webpage/scraping fallback can be limited to around 200 tracks.
 * Direct playlist imports from Spotify, YouTube Music, and Apple Music depend on data exposed by the external services. Changes to a provider's website, API, access rules, or response format can make an import incomplete or cause it to stop working. The saved Personal Text Playlist is not dependent on those provider connections, although matching its artist/title entries still depends on the local catalog metadata.
 * Artist, title, album, and version values from a playlist may not match embedded tags exactly. Fuzzy matching can fail or suggest an imperfect match, so review ambiguous or unmatched entries.
 * Standard Mode depends on the media application's handling of symbolic links. Advanced Mode depends on hard-link support and compatible filesystem/volume layout.

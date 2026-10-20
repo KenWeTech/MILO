@@ -9,9 +9,12 @@ COPY package*.json ./
 
 FROM base AS dependencies
 
-RUN npm install --omit=dev \
-    && npx puppeteer browsers install chrome \
-    && node -e 'const fs = require("node:fs"); const p = require("puppeteer"); const executable = p.executablePath(); console.log("Puppeteer Chrome:", executable); if (!fs.existsSync(executable)) throw new Error("Puppeteer Chrome was not installed");'
+RUN PUPPETEER_SKIP_DOWNLOAD=true npm install --omit=dev
+
+RUN rm -rf /app/.cache/puppeteer \
+    && npx puppeteer browsers install
+
+RUN node -e 'const fs = require("node:fs"); const p = require("puppeteer"); const executable = p.executablePath(); console.log("Puppeteer Chrome:", executable); if (!fs.existsSync(executable)) throw new Error("Puppeteer Chrome was not installed");'
 
 FROM base AS final
 

@@ -17,7 +17,7 @@ RUN PUPPETEER_SKIP_DOWNLOAD=true npm install --omit=dev
 RUN rm -rf /app/.cache/puppeteer \
     && npx puppeteer browsers install
 
-RUN node -e 'const fs = require("node:fs"); const p = require("puppeteer"); const executable = p.executablePath(); console.log("Puppeteer Chrome:", executable); if (!fs.existsSync(executable)) throw new Error("Puppeteer Chrome was not installed");'
+RUN node -e '(async () => { const fs = require("node:fs"); const p = require("puppeteer"); const executable = await p.executablePath(); console.log("Puppeteer Chrome:", executable); if (!fs.existsSync(executable)) throw new Error("Puppeteer Chrome was not installed"); })();'
 
 FROM base AS final
 
@@ -64,7 +64,7 @@ COPY . .
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY --from=dependencies /app/.cache/puppeteer /app/.cache/puppeteer
 
-RUN node -e 'const fs = require("node:fs"); const p = require("puppeteer"); const executable = p.executablePath(); console.log("Final image Chrome:", executable); if (!fs.existsSync(executable)) throw new Error("Puppeteer Chrome is missing from the final image");'
+RUN node -e '(async () => { const fs = require("node:fs"); const p = require("puppeteer"); const executable = await p.executablePath(); console.log("Final image Chrome:", executable); if (!fs.existsSync(executable)) throw new Error("Puppeteer Chrome is missing from the final image"); })();'
 
 EXPOSE 8088
 

@@ -70,11 +70,13 @@ One collection can therefore support multiple personal libraries without using a
 * **Unmatched Logs and Restore Tracks** — Revisit unmatched entries, review or correct possible matches, undo supported changes, and restore previous library selections.
 * **Dead Files recovery** — Find catalog paths that no longer exist and repair entries when a verified replacement file is available.
 * **Scheduled maintenance and sync** — Configure Quick Scan, Detailed Full Scan, and user sync schedules while MILO coordinates maintenance and sync work.
-* **Progressive Web App** — Install MILO on supported devices. If the server becomes unreachable, its offline fallback explains that MILO is offline and offers a refresh/retry option.
+* **Progressive Web App** — Install MILO on supported mobile and desktop devices.
 * **Local network discovery** — Discover the server as `milo.local` on networks and container setups where mDNS traffic is supported.
 * **Administrator tools** — Manage accounts, roles, library paths, linking modes, scan settings, organizer review, provider credentials, and catalog maintenance from the web interface.
 
 MILO is **not a music player**. It builds the catalog and filesystem libraries, and it can organize incoming music. Compatible software such as Plex, Navidrome, or another media application can use the resulting libraries for playback and media management. MILO does **not** edit metadata.
+
+**Ready to get started?** [Jump directly to the Installation section](#installation).
 
 ## Why MILO?
 

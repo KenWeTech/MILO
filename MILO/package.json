@@ -1,7 +1,7 @@
 {
   "name": "MILO",
-  "version": "1.0.0",
-  "description": "MILO is a self-hosted music catalog and library organization server that manages access to a master music collection without duplicating audio files.",
+  "version": "2.0.0",
+  "description": "MILO is a self-hosted music catalog and library organization server that manages access by creating separate libraries from a master music pool without duplicating audio files.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -33,6 +33,7 @@
     "express-session": "^1.19.0",
     "fuzzball": "^2.2.6",
     "music-metadata": "^11.15.0",
+    "puppeteer": "^25.13.0",
     "spotify-web-api-node": "^5.0.2",
     "youtubei.js": "^18.0.0"
   }

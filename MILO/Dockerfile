@@ -1,4 +1,3 @@
-
 FROM node:22-bookworm-slim AS base
 
 ENV PUPPETEER_CACHE_DIR=/app/.cache/puppeteer
@@ -8,6 +7,10 @@ WORKDIR /app
 COPY package*.json ./
 
 FROM base AS dependencies
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN PUPPETEER_SKIP_DOWNLOAD=true npm install --omit=dev
 

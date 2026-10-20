@@ -70,7 +70,7 @@ One collection can therefore support multiple personal libraries without using a
 * **Unmatched Logs and Restore Tracks** — Revisit unmatched entries, review or correct possible matches, undo supported changes, and restore previous library selections.
 * **Dead Files recovery** — Find catalog paths that no longer exist and repair entries when a verified replacement file is available.
 * **Scheduled maintenance and sync** — Configure Quick Scan, Detailed Full Scan, and user sync schedules while MILO coordinates maintenance and sync work.
-* **Progressive Web App** — Install MILO on supported devices and use its offline fallback when the browser's secure-context and certificate requirements are met.
+* **Progressive Web App** — Install MILO on supported devices. If the server becomes unreachable, its offline fallback explains that MILO is offline and offers a refresh/retry option.
 * **Local network discovery** — Discover the server as `milo.local` on networks and container setups where mDNS traffic is supported.
 * **Administrator tools** — Manage accounts, roles, library paths, linking modes, scan settings, organizer review, provider credentials, and catalog maintenance from the web interface.
 
@@ -451,7 +451,7 @@ For Docker, use the container paths from the Compose example. For a source insta
 
 ## SSL Configuration and PWA Support
 
-MILO can serve HTTPS itself or run behind a reverse proxy. Use one method at a time. The PWA's service worker and offline behavior require a secure, trusted browser origin; clicking through a certificate warning alone is not enough on many browsers.
+MILO can use its built-in HTTPS or run behind a reverse proxy, but choose only one. While the app installs over plain HTTP just fine, a fully trusted HTTPS connection is recommended for the best Progressive Web App (PWA) experience across your devices. Keep in mind that simply dismissing a browser security warning doesn't actually make the connection trusted. Lastly, the offline fallback is just a basic retry screen—you cannot browse the catalog, select songs, or manage your library while the server is unreachable.
 
 ### Reverse Proxy (Recommended for HTTPS)
 

@@ -211,6 +211,14 @@ curl -X POST "http://localhost:8088/api/integrations/text-playlist" \
 
 Replace `localhost` with the MILO server address when calling it from another device. Both `artist` and `title` are required. Duplicate entries are ignored. Keep the API key private; it can be revoked or replaced in Sync Settings. The full key is shown when generated and is not continuously displayed afterward.
 
+#### Shazam iOS Shortcut
+
+This is a working example of using the Text Playlist API, which is the Shazam shortcut called [Shazam to MILO](https://www.icloud.com/shortcuts/7d7e8624d0ba4fdf8d41bc4944e1fb21) for iOS.
+
+When triggered after identifying a song with Shazam, this shortcut automatically grabs the track title and artist, reads your server credentials from the configuration dictionary at the top, and gives the option to push the track info to the users Text Playlists.
+
+
+
 ### Direct Playlist Provider Imports
 
 MILO also supports direct playlist imports from Spotify, YouTube Music, and Apple Music as alternate sources when a provider playlist is convenient. A saved Personal Text Playlist remains independent of those provider connections.

@@ -70,11 +70,13 @@ One collection can therefore support multiple personal libraries without using a
 * **Unmatched Logs and Restore Tracks** — Revisit unmatched entries, review or correct possible matches, undo supported changes, and restore previous library selections.
 * **Dead Files recovery** — Find catalog paths that no longer exist and repair entries when a verified replacement file is available.
 * **Scheduled maintenance and sync** — Configure Quick Scan, Detailed Full Scan, and user sync schedules while MILO coordinates maintenance and sync work.
-* **Progressive Web App** — Install MILO on supported devices. If the server becomes unreachable, its offline fallback explains that MILO is offline and offers a refresh/retry option.
+* **Progressive Web App** — Install MILO on supported mobile and desktop devices.
 * **Local network discovery** — Discover the server as `milo.local` on networks and container setups where mDNS traffic is supported.
 * **Administrator tools** — Manage accounts, roles, library paths, linking modes, scan settings, organizer review, provider credentials, and catalog maintenance from the web interface.
 
 MILO is **not a music player**. It builds the catalog and filesystem libraries, and it can organize incoming music. Compatible software such as Plex, Navidrome, or another media application can use the resulting libraries for playback and media management. MILO does **not** edit metadata.
+
+**Ready to get started?** [Jump directly to the Installation section](#installation).
 
 ## Why MILO?
 
@@ -208,6 +210,14 @@ curl -X POST "http://localhost:8088/api/integrations/text-playlist" \
 ```
 
 Replace `localhost` with the MILO server address when calling it from another device. Both `artist` and `title` are required. Duplicate entries are ignored. Keep the API key private; it can be revoked or replaced in Sync Settings. The full key is shown when generated and is not continuously displayed afterward.
+
+#### Shazam iOS Shortcut
+
+This is a working example of using the Text Playlist API, which is the Shazam shortcut called [Shazam to MILO](https://www.icloud.com/shortcuts/7d7e8624d0ba4fdf8d41bc4944e1fb21) for iOS.
+
+When triggered after identifying a song with Shazam, this shortcut automatically grabs the track title and artist, reads your server credentials from the configuration dictionary at the top, and gives the option to push the track info to the users Text Playlists.
+
+
 
 ### Direct Playlist Provider Imports
 

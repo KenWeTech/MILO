@@ -49,10 +49,10 @@ function sameResolvedPath(first, second) {
     return (process.platform === 'win32' ? a.toLowerCase() : a) === (process.platform === 'win32' ? b.toLowerCase() : b);
 }
 
-const MASTER_SCAN_SCHEDULES = [360, 720, 1440, 4320, 10080, 43200]; 
-const INCREMENTAL_SCAN_SCHEDULES = [30, 60, 120, 240, 360, 720, 1440, 4320, 10080]; 
-const USER_SYNC_SCHEDULES = [60, 180, 360, 720, 1440, 10080, 43200]; 
-const GLOBAL_SYNC_COOLDOWN_SECONDS = 5 * 60; 
+const MASTER_SCAN_SCHEDULES = [360, 720, 1440, 4320, 10080, 43200];
+const INCREMENTAL_SCAN_SCHEDULES = [30, 60, 120, 240, 360, 720, 1440, 4320, 10080];
+const USER_SYNC_SCHEDULES = [60, 180, 360, 720, 1440, 10080, 43200];
+const GLOBAL_SYNC_COOLDOWN_SECONDS = 5 * 60;
 
 function normalizeIntervalToSchedule(value, schedules) {
     const requested = Number.parseInt(value, 10);
@@ -67,6 +67,14 @@ const DRIVEPOOL_DRIVES = process.env.DRIVEPOOL_DRIVES
 app.set('view engine', 'ejs');
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+app.get('/api/health', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.status(200).json({ ok: true, service: 'MILO' });
+});
+
 app.use(express.static('public'));
 
 app.use(session({
@@ -206,17 +214,17 @@ function initDb() {
 
     historyDb.exec(`
         CREATE TABLE IF NOT EXISTS playlist_cache (
-            user_id INTEGER, 
-            source_type TEXT, 
-            raw_query TEXT, 
+            user_id INTEGER,
+            source_type TEXT,
+            raw_query TEXT,
             track_id INTEGER,
             PRIMARY KEY (user_id, source_type, raw_query)
         );
 
         CREATE TABLE IF NOT EXISTS removed_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, 
-            user_id INTEGER, 
-            track_id INTEGER, 
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            track_id INTEGER,
             removed_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS missing_log_history (
@@ -264,6 +272,313 @@ initDb();
 function normalizeTextPlaylistQuery(value) {
     return String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
         .replace(/[^\p{L}\p{N}]+/gu, ' ').trim().toLowerCase();
+}
+
+const WANTED_TRACKS_FILE = path.join(path.dirname(path.resolve(DB_PATH)), 'wanted-tracks.txt');
+let wantedTracksRefreshChain = Promise.resolve();
+
+function getWantedTracksSettings() {
+    const rows = db.prepare(`SELECT key, value FROM scan_settings
+        WHERE key IN ('wanted_tracks_mode', 'wanted_tracks_post_url', 'wanted_tracks_last_generated_at', 'wanted_tracks_last_result', 'wanted_tracks_last_count')`).all();
+    const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
+    const validModes = new Set(['file', 'post', 'both']);
+    return {
+        mode: validModes.has(values.wanted_tracks_mode) ? values.wanted_tracks_mode : 'file',
+        post_url: String(values.wanted_tracks_post_url || ''),
+        file_path: WANTED_TRACKS_FILE,
+        last_generated_at: values.wanted_tracks_last_generated_at || '',
+        last_result: values.wanted_tracks_last_result || '',
+        last_count: Number.parseInt(values.wanted_tracks_last_count, 10) || 0
+    };
+}
+
+function saveWantedTracksSetting(key, value) {
+    db.prepare('INSERT OR REPLACE INTO scan_settings (key, value) VALUES (?, ?)').run(key, String(value ?? ''));
+}
+
+function getCatalogArtistNames() {
+    const artists = db.prepare(`SELECT DISTINCT artist FROM catalog
+        WHERE artist IS NOT NULL AND TRIM(artist) <> ''`).all()
+        .map(row => String(row.artist || '').trim())
+        .filter(Boolean);
+    return [...new Set(artists)].sort((a, b) => b.length - a.length);
+}
+
+function formatWantedTrackLine(value, catalogArtists = []) {
+    const query = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!query) return null;
+
+    const explicitPair = query.match(/^(.*?)\s+[-–—]\s+(.+)$/u);
+    if (explicitPair) {
+        const artist = explicitPair[1].trim();
+        const title = explicitPair[2].trim();
+        return artist && title ? `${artist} - ${title}` : null;
+    }
+
+    const lowerQuery = query.toLocaleLowerCase();
+    const artist = catalogArtists.find(candidate =>
+        lowerQuery.startsWith(`${candidate.toLocaleLowerCase()} `)
+    );
+    if (!artist) return null;
+
+    const title = query.slice(artist.length).trim();
+    return artist && title ? `${artist} - ${title}` : null;
+}
+
+function normalizeWantedTrackSnapshot(lines) {
+    const catalogArtists = getCatalogArtistNames();
+    const output = [];
+    const seen = new Set();
+    let skipped = 0;
+    for (const value of lines) {
+        const line = formatWantedTrackLine(value, catalogArtists);
+        if (!line) {
+            skipped++;
+            continue;
+        }
+        const key = normalizeTextPlaylistQuery(line);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        output.push(line);
+    }
+    output.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    return { lines: output, skipped };
+}
+
+let wantedTracksSnapshotBuildRunning = false;
+let wantedTracksSnapshotBuildError = '';
+let lastWantedTracksUnformattedCount = 0;
+
+function readWantedTrackSnapshot() {
+    const cached = db.prepare("SELECT value FROM scan_settings WHERE key = 'wanted_tracks_last_lines'").get();
+    if (cached) {
+        try {
+            const parsed = JSON.parse(cached.value);
+            if (Array.isArray(parsed) && parsed.every(line => typeof line === 'string')) {
+                const normalized = normalizeWantedTrackSnapshot(parsed);
+                lastWantedTracksUnformattedCount = normalized.skipped;
+                const serialized = JSON.stringify(normalized.lines);
+                if (cached.value !== serialized) saveWantedTracksSetting('wanted_tracks_last_lines', serialized);
+                return normalized.lines;
+            }
+        } catch (_) {}
+    }
+
+    try {
+        if (fs.existsSync(WANTED_TRACKS_FILE)) {
+            const content = fs.readFileSync(WANTED_TRACKS_FILE, 'utf8');
+            const lines = content.split(/\r?\n/).filter(line => line.trim());
+            const normalized = normalizeWantedTrackSnapshot(lines);
+            lastWantedTracksUnformattedCount = normalized.skipped;
+            saveWantedTracksSetting('wanted_tracks_last_lines', JSON.stringify(normalized.lines));
+            return normalized.lines;
+        }
+    } catch (error) {
+        console.warn(`[Wanted Tracks] Could not read the existing wanted-tracks.txt snapshot: ${error.message}`);
+    }
+    return null;
+}
+
+function getCurrentWantedTrackLines() {
+    const snapshot = readWantedTrackSnapshot();
+    if (snapshot !== null) return snapshot;
+    const lines = getWantedTrackLines();
+    saveWantedTracksSetting('wanted_tracks_last_lines', JSON.stringify(lines));
+    wantedTracksSnapshotBuildError = '';
+    return lines;
+}
+
+function queueWantedTracksSnapshotBuild() {
+    if (wantedTracksSnapshotBuildRunning || wantedTracksSnapshotBuildError) return;
+    wantedTracksSnapshotBuildRunning = true;
+
+    setTimeout(() => {
+        try {
+            if (readWantedTrackSnapshot() === null) {
+                const lines = getWantedTrackLines();
+                saveWantedTracksSetting('wanted_tracks_last_lines', JSON.stringify(lines));
+            }
+            wantedTracksSnapshotBuildError = '';
+        } catch (error) {
+            wantedTracksSnapshotBuildError = error.message || 'Could not build the current wanted list.';
+            console.warn(`[Wanted Tracks] Could not build the initial wanted-list snapshot: ${wantedTracksSnapshotBuildError}`);
+        } finally {
+            wantedTracksSnapshotBuildRunning = false;
+        }
+    }, 100);
+}
+function validateWantedTracksPostUrl(value, required = false) {
+    const raw = String(value || '').trim();
+    if (!raw) {
+        if (required) throw new Error('Enter the POST URL when POST delivery is enabled.');
+        return '';
+    }
+    if (raw.length > 2048) throw new Error('The POST URL cannot exceed 2,048 characters.');
+    let parsed;
+    try { parsed = new URL(raw); }
+    catch (_) { throw new Error('Enter a valid absolute HTTP or HTTPS POST URL.'); }
+    if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
+        throw new Error('The POST URL must use HTTP or HTTPS.');
+    }
+    if (parsed.username || parsed.password) {
+        throw new Error('Do not embed a username or password in the POST URL.');
+    }
+    return parsed.toString();
+}
+
+function getWantedTrackLines() {
+
+    const logs = db.prepare(`SELECT query, normalized_query FROM missing_track_logs
+        WHERE query IS NOT NULL AND TRIM(query) <> '' ORDER BY id DESC`).all();
+    const catalogRows = db.prepare(`SELECT search_str, artist FROM catalog
+        WHERE search_str IS NOT NULL AND TRIM(search_str) <> ''`).all();
+    const catalogArtists = getCatalogArtistNames();
+    const uniqueQueries = new Map();
+    for (const row of logs) {
+        const query = String(row.query || '').trim();
+        const key = normalizeTextPlaylistQuery(query || row.normalized_query || '');
+        if (key && !uniqueQueries.has(key)) uniqueQueries.set(key, query);
+    }
+    if (!uniqueQueries.size) {
+        lastWantedTracksUnformattedCount = 0;
+        return [];
+    }
+
+    const catalogKeys = [...new Set(catalogRows.map(row => String(row.search_str || '').replace(/[^\w\s]/g, ' ').trim().toLowerCase()).filter(Boolean))];
+    const lines = [];
+    const seenLines = new Set();
+    let skippedUnformatted = 0;
+    for (const [key, query] of uniqueQueries) {
+        const outputLine = formatWantedTrackLine(query, catalogArtists);
+        if (!outputLine) {
+            skippedUnformatted++;
+            continue;
+        }
+        const outputKey = normalizeTextPlaylistQuery(outputLine);
+        if (!outputKey || seenLines.has(outputKey)) continue;
+        seenLines.add(outputKey);
+
+        const cleanQuery = outputLine.replace(/\s+-\s+/u, ' ').replace(/[^\w\s]/g, ' ').trim().toLowerCase();
+        let foundInPool = false;
+        if (cleanQuery && catalogKeys.length) {
+            const match = fuzz.extract(cleanQuery, catalogKeys, {
+                scorer: fuzz.token_set_ratio,
+                returnObjects: true,
+                limit: 1
+            })[0];
+            foundInPool = !!(match && match.score >= 80);
+        }
+        if (!foundInPool) lines.push({ key: outputKey || key, line: outputLine });
+    }
+
+    lines.sort((a, b) => a.line.localeCompare(b.line, undefined, { sensitivity: 'base' }));
+    lastWantedTracksUnformattedCount = skippedUnformatted;
+    return lines.map(item => item.line);
+}
+function wantedTracksModeIncludesFile(mode) {
+    return mode === 'file' || mode === 'both';
+}
+
+function wantedTracksModeIncludesPost(mode) {
+    return mode === 'post' || mode === 'both';
+}
+
+async function generateAndDeliverWantedTracks(reason = 'manual generation') {
+    const settings = getWantedTracksSettings();
+    const lines = getWantedTrackLines();
+
+    saveWantedTracksSetting('wanted_tracks_last_lines', JSON.stringify(lines));
+    wantedTracksSnapshotBuildError = '';
+    const generatedAt = new Date().toISOString();
+    const text = lines.length ? `${lines.join('\n')}\n` : '';
+    const result = {
+        success: true,
+        reason,
+        generatedAt,
+        count: lines.length,
+        skippedUnformattedCount: lastWantedTracksUnformattedCount,
+        preview: lines.slice(0, 30),
+        filePath: WANTED_TRACKS_FILE,
+        fileSaved: false,
+        postSent: false,
+        postStatus: null,
+        errors: []
+    };
+
+    if (wantedTracksModeIncludesFile(settings.mode)) {
+        const tempPath = `${WANTED_TRACKS_FILE}.${process.pid}.${Date.now()}.tmp`;
+        try {
+            fs.mkdirSync(path.dirname(WANTED_TRACKS_FILE), { recursive: true });
+            fs.writeFileSync(tempPath, text, 'utf8');
+            fs.renameSync(tempPath, WANTED_TRACKS_FILE);
+            result.fileSaved = true;
+        } catch (error) {
+            try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch (_) {}
+            result.errors.push(`Could not write wanted-tracks.txt: ${error.message}`);
+        }
+    }
+
+    if (wantedTracksModeIncludesPost(settings.mode)) {
+        try {
+            const postUrl = validateWantedTracksPostUrl(settings.post_url, true);
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 10000);
+            try {
+                const response = await fetch(postUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Accept': 'application/json, text/plain, */*' },
+
+                    body: JSON.stringify({ songs: lines.join('\n') }),
+                    signal: controller.signal
+                });
+                if (!response.ok) {
+                    let detail = '';
+                    try { detail = (await response.text()).trim().slice(0, 300); } catch (_) {}
+                    throw new Error(`POST endpoint returned HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
+                }
+                result.postSent = true;
+                result.postStatus = response.status;
+            } finally {
+                clearTimeout(timeout);
+            }
+        } catch (error) {
+            result.errors.push(`POST delivery failed: ${error.name === 'AbortError' ? 'request timed out after 10 seconds' : error.message}`);
+        }
+    }
+
+    result.success = result.errors.length === 0;
+    const skippedMessage = result.skippedUnformattedCount
+        ? ` Skipped ${result.skippedUnformattedCount} legacy unmatched entr${result.skippedUnformattedCount === 1 ? 'y' : 'ies'} because MILO could not identify both the artist and song title; re-sync the source playlist to refresh those entries.`
+        : '';
+    result.message = result.errors.length
+        ? `Generated ${lines.length} unique wanted track(s), but ${result.errors.join(' ')}${skippedMessage}`
+        : `Generated ${lines.length} unique wanted track(s)${result.fileSaved ? ' and updated the text file' : ''}${result.postSent ? ` and sent the POST request (HTTP ${result.postStatus})` : ''}.${skippedMessage}`;
+
+    saveWantedTracksSetting('wanted_tracks_last_generated_at', generatedAt);
+    saveWantedTracksSetting('wanted_tracks_last_count', lines.length);
+    saveWantedTracksSetting('wanted_tracks_last_result', JSON.stringify({
+        success: result.success,
+        message: result.message,
+        fileSaved: result.fileSaved,
+        postSent: result.postSent,
+        postStatus: result.postStatus,
+        errors: result.errors
+    }));
+    return result;
+}
+
+function queueWantedTracksRefresh(reason) {
+    wantedTracksRefreshChain = wantedTracksRefreshChain
+        .catch(() => undefined)
+        .then(() => generateAndDeliverWantedTracks(reason))
+        .then(result => {
+            if (!result.success) console.warn(`[Wanted Tracks] Automatic update failed (${reason}): ${result.message}`);
+            else console.log(`[Wanted Tracks] Updated after ${reason}: ${result.count} unique wanted track(s).`);
+            return result;
+        })
+        .catch(error => {
+            console.warn(`[Wanted Tracks] Automatic update failed (${reason}): ${error.message}`);
+        });
 }
 
 function normalizedTextTokenSet(value) {
@@ -1764,6 +2079,7 @@ async function executeMasterPoolScan(trigger = 'manual master-pool scan') {
         db.prepare("INSERT OR REPLACE INTO scan_settings (key, value) VALUES ('last_master_scan', ?)").run(completedAt);
 
         db.prepare("INSERT OR REPLACE INTO scan_settings (key, value) VALUES ('last_incremental_scan', ?)").run(completedAt);
+        queueWantedTracksRefresh('detailed full scan');
         return activeScanJob;
     } catch (error) {
         activeScanJob = { status: 'error', type: 'full', progress: activeScanJob.progress || 0, total: activeScanJob.total || 0, message: error.message, trigger, queueId: activeScanJob.queueId || activeQueueTaskId || null, startedAt: activeScanJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false };
@@ -1906,6 +2222,7 @@ async function executeIncrementalPoolScan(trigger = 'manual quick scan') {
             message: `Quick scan completed. ${newFiles} new file(s), ${changedFiles} changed file(s), ${recoveredCatalogRows} missing catalog row(s) restored, ${repairedCatalogPaths} stale catalog path(s) repaired. Catalog now contains ${finalAvailable} available pool tracks.${mergedPathAliases ? ` Consolidated ${mergedPathAliases} case-variant path(s).` : ''}${inaccessiblePoolDirectories.length ? ` ${inaccessiblePoolDirectories.length} pool folder(s) could not be read; cached identities under those folders were preserved.` : ''}${skippedFiles ? ` ${skippedFiles} file(s) could not be fully checked; use the detailed full scan if needed.` : ''}`,
             startedAt: activeScanJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false
         };
+        queueWantedTracksRefresh('quick scan');
         return activeScanJob;
     } catch (error) {
         activeScanJob = { status: 'error', type: 'incremental', progress: activeScanJob.progress || 0,
@@ -2081,6 +2398,85 @@ app.delete('/api/admin/users/:user_id', requireLogin, (req, res) => {
     setImmediate(() => runUserDeletionJob(activeLibraryPathJob));
 });
 
+app.get('/api/admin/wanted-tracks', requireLogin, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ success: false, message: 'Administrator access required.' });
+    try {
+        const settings = getWantedTracksSettings();
+        let lines = readWantedTrackSnapshot();
+        let listPending = false;
+        let listError = '';
+        if (lines === null) {
+            if (wantedTracksSnapshotBuildError) {
+                listError = wantedTracksSnapshotBuildError;
+                lines = [];
+            } else {
+                queueWantedTracksSnapshotBuild();
+                listPending = true;
+                lines = [];
+            }
+        }
+        let lastResult = null;
+        try { lastResult = settings.last_result ? JSON.parse(settings.last_result) : null; } catch (_) {}
+        res.json({
+            success: true,
+            mode: settings.mode,
+            post_url: settings.post_url,
+            file_path: settings.file_path,
+            track_count: listPending ? null : lines.length,
+            preview: lines.slice(0, 30),
+            skipped_unformatted_count: listPending ? 0 : lastWantedTracksUnformattedCount,
+            list_pending: listPending,
+            list_error: listError,
+            last_generated_at: settings.last_generated_at,
+            last_count: settings.last_count,
+            last_result: lastResult
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message || 'Could not load Wanted Tracks.' });
+    }
+});
+
+app.post('/api/admin/wanted-tracks/settings', requireLogin, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ success: false, message: 'Administrator access required.' });
+    const mode = String(req.body.mode || 'file').trim().toLowerCase();
+    if (!['file', 'post', 'both'].includes(mode)) {
+        return res.status(400).json({ success: false, message: 'Choose text file, POST, or both for Wanted Tracks output.' });
+    }
+    let postUrl = '';
+    try {
+        if (mode === 'post' || mode === 'both') postUrl = validateWantedTracksPostUrl(req.body.post_url, true);
+    } catch (error) {
+        return res.status(400).json({ success: false, message: error.message });
+    }
+
+    saveWantedTracksSetting('wanted_tracks_mode', mode);
+    saveWantedTracksSetting('wanted_tracks_post_url', postUrl);
+    res.json({ success: true, message: 'Wanted Tracks settings saved.', mode, post_url: postUrl, file_path: WANTED_TRACKS_FILE });
+});
+
+app.post('/api/admin/wanted-tracks/generate', requireLogin, async (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ success: false, message: 'Administrator access required.' });
+    try {
+        const result = await generateAndDeliverWantedTracks('manual generation');
+        res.status(result.success ? 200 : 502).json(result);
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message || 'Could not generate Wanted Tracks.' });
+    }
+});
+
+app.get('/api/admin/wanted-tracks/download', requireLogin, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ success: false, message: 'Administrator access required.' });
+    try {
+        const lines = getCurrentWantedTrackLines();
+        const content = lines.length ? `${lines.join('\n')}\n` : '';
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('Content-Disposition', 'attachment; filename="wanted-tracks.txt"');
+        res.send(content);
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message || 'Could not generate the wanted-track text.' });
+    }
+});
+
 app.get('/api/admin/scan-settings', requireLogin, (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({});
     const rows = db.prepare("SELECT * FROM scan_settings").all();
@@ -2089,7 +2485,7 @@ app.get('/api/admin/scan-settings', requireLogin, (req, res) => {
     settings.auto_approve_metadata = settings.auto_approve_metadata === '1';
 
     if (settings.exempt_folders) {
-        try { settings.exempt_folders = JSON.parse(settings.exempt_folders); } 
+        try { settings.exempt_folders = JSON.parse(settings.exempt_folders); }
         catch (e) { settings.exempt_folders = []; }
     } else {
         settings.exempt_folders = [];
@@ -2700,6 +3096,7 @@ async function runUserDeletionJob(job) {
         job.status = 'completed';
         job.completedAt = Date.now();
         job.progress = tracks.length;
+        queueWantedTracksRefresh('user deletion');
         job.message = `User deleted. Removed ${removed.toLocaleString()} managed link(s); unrelated files were left untouched.`;
         job.result = { removed, total: tracks.length };
     } catch (error) {
@@ -2739,7 +3136,7 @@ function getActiveQueueTask() {
 
 function getStandaloneQueueBlocker() {
 
-    if (getActiveQueueTask()) return null; 
+    if (getActiveQueueTask()) return null;
     const activeStates = ['running', 'fetching', 'processing'];
     if (activeOrganizerJob && activeStates.includes(activeOrganizerJob.status)) {
         return {
@@ -3454,6 +3851,7 @@ async function processSyncJob(user, source_type, input_data, options = {}) {
         job.applied = false;
     }
     job.completedAt = Date.now();
+    queueWantedTracksRefresh('playlist sync');
 }
 
 function applyTracksToLibrary(user, trackIds) {
@@ -3529,6 +3927,7 @@ app.get('/api/user/missing-logs', requireLogin, (req, res) => {
                         removeLog.run(log.id, req.user.id);
                     }
                 })();
+                queueWantedTracksRefresh('unmatched logs reconciled');
             }
         }
 
@@ -3635,6 +4034,7 @@ async function runMissingLogBulkJob(user, items, job) {
         job.total = items.length;
         job.message = `Unmatched-log batch finished: ${linked} linked${errors.length ? `, ${errors.length} need attention` : ''}.`;
         job.result = { linked, added, failed: errors.length, errors: errors.slice(0, 50) };
+        queueWantedTracksRefresh('unmatched-log resolution');
     } catch (error) {
         job.status = 'error';
         job.completedAt = Date.now();
@@ -3673,6 +4073,7 @@ async function runMissingLogSkipJob(userId, items, job) {
     job.total = items.length;
     job.message = `Unmatched-log skip finished: ${skipped} skipped${errors.length ? `, ${errors.length} need attention` : ''}.`;
     job.result = { skipped, failed: errors.length, errors: errors.slice(0, 100) };
+    queueWantedTracksRefresh('unmatched-log skip');
 }
 
 app.post('/api/user/missing-logs/resolve/bulk', requireLogin, (req, res) => {
@@ -3704,6 +4105,7 @@ app.get('/api/user/missing-logs/resolve/bulk/status', requireLogin, (req, res) =
 
 app.delete('/api/user/missing-logs/all', requireLogin, (req, res) => {
     db.prepare('DELETE FROM missing_track_logs WHERE user_id = ?').run(req.user.id);
+    queueWantedTracksRefresh('unmatched logs cleared');
     res.json({ success: true });
 });
 
@@ -3720,6 +4122,7 @@ app.post('/api/user/missing-logs/:log_id/skip', requireLogin, (req, res) => {
                 alreadyAssigned ? 'Skipped from active unmatched logs; the suggested track was already in the library.' : 'Skipped from active unmatched logs.');
             db.prepare('DELETE FROM missing_track_logs WHERE id = ? AND user_id = ?').run(logId, req.user.id);
         })();
+        queueWantedTracksRefresh('unmatched-log skip');
         res.json({ success: true, message: 'Unmatched log skipped and saved to history.' });
     } catch (error) { res.status(500).json({ success: false, message: error.message || 'Could not skip this unmatched log.' }); }
 });
@@ -3770,6 +4173,7 @@ app.post('/api/user/missing-logs/history/:history_id/undo', requireLogin, (req, 
         }
         restoreMissingLogFromHistory(history);
         historyDb.prepare('UPDATE missing_log_history SET undone_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?').run(historyId, req.user.id);
+        queueWantedTracksRefresh('unmatched-log restored');
         invalidateLiveCatalogSnapshot();
         lastLibraryLinkReconcileAt.delete(Number(req.user.id));
         res.json({ success: true, message: 'History entry reversed; the unmatched query is back in the active log list.' });
@@ -3778,6 +4182,7 @@ app.post('/api/user/missing-logs/history/:history_id/undo', requireLogin, (req, 
 
 app.delete('/api/user/missing-logs/:log_id', requireLogin, (req, res) => {
     const result = db.prepare('DELETE FROM missing_track_logs WHERE id = ? AND user_id = ?').run(req.params.log_id, req.user.id);
+    if (result.changes) queueWantedTracksRefresh('unmatched log removed');
     res.json({ success: true, cleared: result.changes > 0 });
 });
 
@@ -3794,6 +4199,7 @@ app.post('/api/user/missing-logs/resolve', requireLogin, (req, res) => {
         const deletion = db.prepare('DELETE FROM missing_track_logs WHERE id = ? AND user_id = ?').run(logId, req.user.id);
         if (!deletion.changes) return res.status(409).json({ success: false, message: 'The unmatched log was already cleared.' });
         recordMissingLogHistory(req.user.id, log, 'linked', track, alreadyAssigned, result.added ? 'Track added to the library from an unmatched-log decision.' : 'The chosen track was already assigned to the library.');
+        queueWantedTracksRefresh('unmatched-log resolution');
         return res.json({ success: true, added: result.added, message: result.added ? 'Track linked to your library.' : 'Track was already in your library; unmatched log cleared.' });
     } catch (error) {
         return res.status(400).json({ success: false, message: error.message || 'Could not link this unmatched track.' });

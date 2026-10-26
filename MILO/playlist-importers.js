@@ -102,7 +102,7 @@ function providerText(value) {
 function makeTrackQuery(artist, title) {
     const cleanArtist = cleanTrackText(providerText(artist));
     const cleanTitle = cleanTrackText(providerText(title));
-    return [cleanArtist, cleanTitle].filter(Boolean).join(' ').trim();
+    return cleanArtist && cleanTitle ? `${cleanArtist} - ${cleanTitle}` : (cleanArtist || cleanTitle).trim();
 }
 
 function dedupeTrackQueries(queries) {
@@ -648,7 +648,7 @@ async function fetchProviderPlaylistTracks(source_type, playlistInput, options =
                                 const artist = Array.from(artistNodes)
                                     .map(node => (node.innerText || node.textContent || '').trim())
                                     .filter(Boolean).join(', ');
-                                if (title) extracted.push(`${artist} ${title}`.trim());
+                                if (title) extracted.push(`${artist ? `${artist} - ` : ''}${title}`.trim());
                             });
                             return extracted;
                         });
@@ -976,12 +976,12 @@ async function fetchProviderPlaylistTracks(source_type, playlistInput, options =
                 pageCount++;
 
                 try {
-                    const response = await axios.get(url, { 
-                        headers: { 
-                            'Authorization': `Bearer ${activeToken}`, 
-                            'Origin': 'https://music.apple.com' 
-                        }, 
-                        timeout: 10000 
+                    const response = await axios.get(url, {
+                        headers: {
+                            'Authorization': `Bearer ${activeToken}`,
+                            'Origin': 'https://music.apple.com'
+                        },
+                        timeout: 10000
                     });
 
                     const items = response.data?.data || [];
@@ -995,7 +995,7 @@ async function fetchProviderPlaylistTracks(source_type, playlistInput, options =
                         if (item.attributes) {
                             const trackName = item.attributes.name || '';
                             const artistName = item.attributes.artistName || '';
-                            if (trackName) raw_queries.push(`${artistName} ${trackName}`.trim());
+                            if (trackName) raw_queries.push(`${artistName ? `${artistName} - ` : ''}${trackName}`.trim());
                         }
                     }
 
@@ -1107,7 +1107,7 @@ async function fetchProviderPlaylistTracks(source_type, playlistInput, options =
                             });
 
                             for (const track of tracks) {
-                                const query = `${cleanTrackText(track.artist)} ${cleanTrackText(track.title)}`.trim();
+                                const query = makeTrackQuery(track.artist, track.title);
                                 const key = normalizeTrackQuery(query);
                                 if (query && key && !trackSet.has(key)) trackSet.set(key, query);
                             }

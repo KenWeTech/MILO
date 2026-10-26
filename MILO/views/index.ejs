@@ -592,25 +592,63 @@
     </div>
 
     <div id="dead-files-modal" class="fixed z-[90] inset-0 bg-[#000000]/80 backdrop-blur-sm items-center justify-center hidden p-4 sm:p-6">
-        <div class="bg-[#000012] border border-[#216281] rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden" role="dialog" aria-modal="true" aria-labelledby="pool-maintenance-title">
-            <div class="p-5 border-b border-[#216281] flex justify-between items-center bg-[#000012] gap-3">
+        <div class="bg-[#000012] border border-[#216281] rounded-2xl w-full max-w-4xl h-[92vh] max-h-[92vh] min-h-0 shadow-2xl flex flex-col overflow-hidden" role="dialog" aria-modal="true" aria-labelledby="pool-maintenance-title">
+            <div class="p-5 border-b border-[#216281] flex justify-between items-center bg-[#000012] gap-3 shrink-0">
                 <div>
                     <h3 id="pool-maintenance-title" class="text-lg font-bold text-[#A05AFA]">Pool Maintenance</h3>
-                    <p class="text-xs text-[#7a7d90] mt-1">Repair missing catalog entries or manage the shared wanted-track list.</p>
+                    <p class="text-xs text-[#7a7d90] mt-1">Review scheduled work, task history, storage usage, and catalog maintenance.</p>
                 </div>
                 <button onclick="closeDeadFilesModal()" class="text-[#7a7d90] hover:text-[#ffffff] transition-colors" aria-label="Close Pool Maintenance">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                 </button>
             </div>
 
-            <div class="flex gap-2 px-5 pt-4 border-b border-[#216281] bg-[#000012]" role="tablist" aria-label="Pool Maintenance tools">
-                <button id="pool-tab-dead-files" type="button" role="tab" aria-selected="true" aria-controls="dead-files-tab-panel" onclick="switchPoolMaintenanceTab('dead-files')" class="px-4 py-2 rounded-t-lg border text-xs font-semibold transition-colors bg-[#2C53CA] border-[#2B66FD] text-[#ffffff]">Dead Files</button>
+            <div class="flex-none flex gap-2 px-5 pt-4 border-b border-[#216281] bg-[#000012] overflow-x-auto min-h-[48px]" role="tablist" aria-label="Pool Maintenance tools">
                 <% if (current_user.role === 'admin') { %>
-                <button id="pool-tab-wanted-tracks" type="button" role="tab" aria-selected="false" aria-controls="wanted-tracks-tab-panel" onclick="switchPoolMaintenanceTab('wanted-tracks')" class="px-4 py-2 rounded-t-lg border text-xs font-semibold transition-colors bg-[#000000] border-[#216281] text-[#b4b7c5]">Wanted Tracks</button>
+                <button id="pool-tab-overview" type="button" role="tab" aria-selected="true" aria-controls="pool-overview-tab-panel" onclick="switchPoolMaintenanceTab('overview')" class="shrink-0 px-4 py-2 rounded-t-lg border text-xs font-semibold transition-colors bg-[#2C53CA] border-[#2B66FD] text-[#ffffff]">System Overview</button>
+                <% } %>
+                <button id="pool-tab-dead-files" type="button" role="tab" aria-selected="false" aria-controls="dead-files-tab-panel" onclick="switchPoolMaintenanceTab('dead-files')" class="shrink-0 px-4 py-2 rounded-t-lg border text-xs font-semibold transition-colors bg-[#000000] border-[#216281] text-[#b4b7c5]">Dead Files</button>
+                <% if (current_user.role === 'admin') { %>
+                <button id="pool-tab-wanted-tracks" type="button" role="tab" aria-selected="false" aria-controls="wanted-tracks-tab-panel" onclick="switchPoolMaintenanceTab('wanted-tracks')" class="shrink-0 px-4 py-2 rounded-t-lg border text-xs font-semibold transition-colors bg-[#000000] border-[#216281] text-[#b4b7c5]">Wanted Tracks</button>
                 <% } %>
             </div>
 
-            <div id="dead-files-tab-panel" role="tabpanel" aria-labelledby="pool-tab-dead-files" class="flex flex-col flex-1 min-h-0 overflow-hidden">
+            <% if (current_user.role === 'admin') { %>
+            <div id="pool-overview-tab-panel" role="tabpanel" aria-labelledby="pool-tab-overview" class="flex flex-col flex-1 min-h-0 overflow-hidden">
+                <div class="p-4 sm:p-5 overflow-y-auto flex-1 min-h-0 space-y-5">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                            <h4 class="text-sm font-semibold text-[#00BBFC]">Pool Operations</h4>
+                            <p class="text-xs text-[#7a7d90] mt-1">Upcoming scans and syncs, task history, storage usage, and user-library link health.</p>
+                            <p id="pool-overview-path" class="text-[11px] font-mono text-[#7a7d90] break-all mt-1"></p>
+                        </div>
+                        <button id="btn-pool-overview-refresh" type="button" onclick="refreshPoolMaintenanceOverview(true)" class="shrink-0 px-4 py-2 rounded-lg bg-[#2C53CA] hover:bg-[#2B66FD] text-xs font-semibold">Refresh Overview</button>
+                    </div>
+                    <p id="pool-overview-status" aria-live="polite" class="text-xs text-[#7a7d90]">Loading system overview…</p>
+                    <div id="pool-overview-summary" class="grid grid-cols-2 xl:grid-cols-4 gap-3"></div>
+                    <section class="bg-[#000000] border border-[#216281] rounded-xl p-4 space-y-3">
+                        <div class="flex items-center justify-between gap-2"><h4 class="text-xs font-semibold text-[#00BBFC] uppercase tracking-wider">Upcoming Scans &amp; Syncs</h4><span class="text-[10px] text-[#7a7d90]">Scheduled cron</span></div>
+                        <div id="pool-upcoming-work" class="grid grid-cols-1 md:grid-cols-2 gap-3"><p class="text-xs text-[#7a7d90]">Loading schedule…</p></div>
+                        <div class="border-t border-[#216281]/60 pt-3"><h5 class="text-xs font-semibold text-[#d5d7e0] mb-2">Active / Queued Work</h5><div id="pool-active-work" class="space-y-2"><p class="text-xs text-[#7a7d90]">Loading queue…</p></div></div>
+                    </section>
+                    <section class="bg-[#000000] border border-[#216281] rounded-xl p-4 space-y-3">
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2"><h4 class="text-xs font-semibold text-[#00BBFC] uppercase tracking-wider">Master Pool Storage</h4><span id="pool-storage-calculated-at" class="text-[10px] text-[#7a7d90]"></span></div>
+                        <div id="pool-storage-summary" class="grid grid-cols-2 lg:grid-cols-4 gap-3"><p class="text-xs text-[#7a7d90]">Storage analysis will begin shortly…</p></div>
+                        <div id="pool-storage-formats" class="overflow-x-auto"><p class="text-xs text-[#7a7d90]">Building format breakdown…</p></div>
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            <div><h5 class="text-xs font-semibold text-[#d5d7e0] mb-2">Top Storage-Consuming Artists</h5><div id="pool-top-artists" class="space-y-2"><p class="text-xs text-[#7a7d90]">Calculating…</p></div></div>
+                            <div><h5 class="text-xs font-semibold text-[#d5d7e0] mb-2">User Library Link Health</h5><div id="pool-user-link-summary" class="grid grid-cols-2 gap-2 mb-2"></div><div id="pool-user-link-stats" class="overflow-x-auto"><p class="text-xs text-[#7a7d90]">Checking user links…</p></div></div>
+                        </div>
+                    </section>
+                    <section class="bg-[#000000] border border-[#216281] rounded-xl p-4 space-y-3">
+                        <div class="flex items-center justify-between gap-2"><h4 class="text-xs font-semibold text-[#00BBFC] uppercase tracking-wider">Background Task History</h4><span class="text-[10px] text-[#7a7d90]">Latest 100</span></div>
+                        <div id="pool-task-history" class="space-y-2"><p class="text-xs text-[#7a7d90]">Loading task history…</p></div>
+                    </section>
+                </div>
+            </div>
+            <% } %>
+
+            <div id="dead-files-tab-panel" role="tabpanel" aria-labelledby="pool-tab-dead-files" class="hidden flex-col flex-1 min-h-0 overflow-hidden">
 <div class="p-6 overflow-y-auto flex-1 min-h-0 space-y-4">
                 <p class="text-xs text-[#b4b7c5]">These catalog entries point to missing paths. MILO checks for a replacement using embedded title and artist metadata and considers album compatibility and file quality. Repair updates the existing catalog entry while preserving library assignments; Clear Entry only removes the stale catalog record, not an audio file.</p>
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#000000] border border-[#2a2e43] rounded-lg p-3">
@@ -623,7 +661,7 @@
                 <div id="dead-files-container" class="bg-[#000000] border border-[#2a2e43] rounded-xl max-h-[55vh] overflow-y-auto p-4 space-y-3"></div>
             </div>
 
-            <div class="p-4 border-t border-[#216281] flex justify-between items-center bg-[#000012]">
+            <div class="p-4 border-t border-[#216281] flex justify-between items-center bg-[#000012] shrink-0">
                 <span id="dead-files-count" class="text-xs text-[#7a7d90]">0 missing files detected</span>
                 <button onclick="purgeDeadFiles()" id="btn-purge-dead" class="px-5 py-2 bg-[#814AC8] hover:bg-[#A05AFA] rounded-lg text-xs font-semibold text-[#ffffff] transition-colors">
                     Purge All Dead Files
@@ -645,7 +683,7 @@
                     <div>
                         <label for="wanted-tracks-post-url" class="block text-xs font-semibold text-[#00BBFC] mb-1">POST URL</label>
                         <input id="wanted-tracks-post-url" type="url" inputmode="url" placeholder="https://example.com/api/wanted-tracks" class="w-full bg-[#000012] border border-[#2a2e43] focus:border-[#2B66FD] rounded-lg p-2.5 text-xs text-[#ffffff] outline-none">
-                        <p class="text-[11px] text-[#7a7d90] mt-1">Required when POST is enabled. MILO sends only a JSON <code class="text-[#00BBFC]">songs</code> array. Each entry is formatted as <code class="text-[#00BBFC]">artist - song title</code>; no other fields are sent. HTTP and HTTPS URLs are supported.</p>
+                        <p class="text-[11px] text-[#7a7d90] mt-1">Required when POST is enabled. MILO sends a JSON object with only a <code class="text-[#00BBFC]">songs</code> field. That field is one newline-separated string; each line is formatted as <code class="text-[#00BBFC]">artist - song title</code>; no other fields are sent. HTTP and HTTPS URLs are supported.</p>
                     </div>
                     <div class="border-t border-[#216281]/60 pt-3">
                         <p class="text-xs text-[#d5d7e0] font-semibold">Text file location</p>
@@ -667,7 +705,7 @@
                 </div>
             </div>
 
-            <div class="p-4 border-t border-[#216281] flex flex-col sm:flex-row justify-end gap-3 bg-[#000012]">
+            <div class="p-4 border-t border-[#216281] flex flex-col sm:flex-row justify-end gap-3 bg-[#000012] shrink-0">
                 <button onclick="closeWantedTracksModal()" class="px-4 py-2 bg-[#1d202f] hover:bg-[#2a2e43] rounded-lg text-xs font-semibold transition-colors">Close</button>
                 <button id="btn-save-wanted-tracks" onclick="saveWantedTracksSettings()" class="px-4 py-2 bg-[#713CCC] hover:bg-[#8A48FF] rounded-lg text-xs font-semibold text-[#ffffff] transition-colors">Save Settings</button>
                 <button id="btn-generate-wanted-tracks" onclick="generateWantedTracksNow()" class="px-5 py-2 bg-[#2C53CA] hover:bg-[#2B66FD] rounded-lg text-xs font-semibold text-[#ffffff] transition-colors">Generate &amp; Send Now</button>
@@ -1175,227 +1213,6 @@
             window.location.reload();
         }
 
-        function saveCatalogPreferences() {
-            try {
-                localStorage.setItem(catalogPreferencesKey, JSON.stringify({
-                    search: document.getElementById('search-input').value,
-                    filter: document.getElementById('library-filter').value,
-                    sort: document.getElementById('sort-by').value,
-                    order: document.getElementById('sort-order').value,
-                    limit: document.getElementById('page-limit').value,
-                    page: currentPage
-                }));
-            } catch (_) {
-
-            }
-        }
-
-        function restoreCatalogPreferences() {
-            try {
-                const saved = JSON.parse(localStorage.getItem(catalogPreferencesKey) || 'null');
-                if (!saved || typeof saved !== 'object') return;
-                const filter = document.getElementById('library-filter');
-                const sort = document.getElementById('sort-by');
-                const order = document.getElementById('sort-order');
-                const limit = document.getElementById('page-limit');
-                const search = document.getElementById('search-input');
-                if (saved.filter && Array.from(filter.options).some(option => option.value === saved.filter)) filter.value = saved.filter;
-                if (saved.sort && Array.from(sort.options).some(option => option.value === saved.sort)) sort.value = saved.sort;
-                if (saved.order && Array.from(order.options).some(option => option.value === saved.order)) order.value = saved.order;
-                if (saved.limit && Array.from(limit.options).some(option => option.value === saved.limit)) limit.value = saved.limit;
-                if (typeof saved.search === 'string') search.value = saved.search;
-                currentPage = Number.isSafeInteger(Number(saved.page)) && Number(saved.page) > 0 ? Number(saved.page) : 1;
-            } catch (_) {
-                currentPage = 1;
-            }
-        }
-
-        function loadCatalog() {
-            const q = document.getElementById('search-input').value;
-            const sort = document.getElementById('sort-by').value;
-            const order = document.getElementById('sort-order').value;
-            const filter = document.getElementById('library-filter').value;
-            const limit = document.getElementById('page-limit').value;
-            saveCatalogPreferences();
-            const requestToken = ++catalogRequestToken;
-            if (catalogAbortController) catalogAbortController.abort();
-            catalogAbortController = new AbortController();
-            const tbody = document.getElementById('catalog-table');
-            tbody.innerHTML = `<tr><td colspan="4" class="p-6 text-center text-xs text-[#7a7d90]"><span class="inline-flex items-center justify-center gap-2"><span class="inline-block w-3 h-3 border-2 border-[#216281] border-t-[#00BBFC] rounded-full animate-spin"></span>Loading catalog…</span></td></tr>`;
-
-            fetch(`/api/catalog?q=${encodeURIComponent(q)}&sort=${encodeURIComponent(sort)}&order=${encodeURIComponent(order)}&library_filter=${encodeURIComponent(filter)}&page=${currentPage}&limit=${encodeURIComponent(limit)}`, { signal: catalogAbortController.signal })
-                .then(r => {
-                    if (!r.ok) throw new Error(`Catalog request failed (${r.status}).`);
-                    return r.json();
-                })
-                .then(data => {
-                    if (requestToken !== catalogRequestToken) return;
-                    if (!data || !Array.isArray(data.tracks) || !data.stats) throw new Error('The catalog response was incomplete.');
-                    renderCatalogTable(data.tracks);
-                    updatePaginationUI(data.stats);
-                    saveCatalogPreferences();
-                })
-                .catch(err => {
-                    if (err && err.name === 'AbortError') return;
-                    if (requestToken !== catalogRequestToken) return;
-                    tbody.innerHTML = `<tr><td colspan="4" class="p-6 text-center text-xs text-[#ff80a8]">${escapeHtml(err.message || 'Could not load the catalog.')}</td></tr>`;
-                });
-        }
-
-        function renderCatalogTable(tracks) {
-            const tbody = document.getElementById('catalog-table');
-            tbody.innerHTML = '';
-
-            if (tracks.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="4" class="p-6 text-center text-xs text-[#7a7d90]">No matching tracks found.</td></tr>`;
-                return;
-            }
-
-            tracks.forEach(track => {
-                const tr = document.createElement('tr');
-                tr.className = 'hover:bg-[#1d202f]/30 transition-colors cursor-pointer sm:cursor-default';
-                tr.setAttribute('onclick', `toggleMobileRow(${Number(track.id)})`);
-                tr.innerHTML = `
-                    <td class="p-4 font-medium text-[#f1f2f6]">
-                        <div class="flex items-center justify-between gap-2">
-                            <div class="min-w-0 truncate max-w-[180px] sm:max-w-xs font-semibold text-[#fcfcfc]">
-                                ${escapeHtml(track.title)}
-                                <div class="sm:hidden text-xs text-[#b4b7c5] font-normal truncate mt-0.5">${escapeHtml(track.artist || '')}</div>
-                            </div>
-                            <button type="button" class="sm:hidden text-[#7a7d90] hover:text-[#d5d7e0] ml-1 p-1 shrink-0" aria-label="Show track details" tabindex="-1">
-                                <svg id="chevron-${Number(track.id)}" class="w-4 h-4 transform transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                            </button>
-                        </div>
-                    </td>
-                    <td class="p-4 text-[#b4b7c5] truncate max-w-[150px] hidden sm:table-cell">${escapeHtml(track.artist || '')}</td>
-                    <td class="p-4 text-[#7a7d90] truncate max-w-[180px] hidden sm:table-cell">${escapeHtml(track.album || '')}</td>
-                    <td class="p-4 text-right pr-4 sm:pr-6" onclick="event.stopPropagation()">
-                        <button type="button" data-track-id="${Number(track.id)}" data-in-library="${track.in_library ? 'true' : 'false'}" onclick="toggleTrack(${Number(track.id)})" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${track.in_library ? 'bg-[#330816] hover:bg-[#66112c] text-[#ff80a8] border border-[#66112c]' : 'bg-[#003B63] hover:bg-[#0092FC] text-[#00BBFC] border border-[#0092FC]'}">
-                            ${track.in_library ? 'Remove' : 'Add'}
-                        </button>
-                    </td>
-                `;
-                tbody.appendChild(tr);
-
-                const details = document.createElement('tr');
-                details.id = `details-${Number(track.id)}`;
-                details.className = 'hidden sm:hidden bg-[#000000]/80 border-b border-[#216281]/80';
-                const durationSeconds = Number(track.duration);
-                const durationLabel = Number.isFinite(durationSeconds) && durationSeconds > 0
-                    ? `${Math.floor(durationSeconds / 60)}:${String(Math.floor(durationSeconds % 60)).padStart(2, '0')}`
-                    : '';
-                const formatLabel = String(track.format || '').trim();
-                details.innerHTML = `
-                    <td colspan="2" class="p-3 text-xs space-y-1.5">
-                        <div><span class="text-[#7a7d90] uppercase font-semibold text-[10px]">Album:</span> <span class="text-[#d5d7e0] ml-1 break-words">${escapeHtml(track.album || 'Unknown album')}</span></div>
-                        <div><span class="text-[#7a7d90] uppercase font-semibold text-[10px]">${durationLabel ? 'Track Length:' : 'Format:'}</span> <span class="text-[#d5d7e0] ml-1 break-words">${escapeHtml(durationLabel || formatLabel || 'Unknown')}</span></div>
-                    </td>
-                `;
-                tbody.appendChild(details);
-            });
-        }
-
-        function toggleMobileRow(trackId) {
-            if (window.matchMedia('(min-width: 640px)').matches) return;
-            const details = document.getElementById(`details-${Number(trackId)}`);
-            const chevron = document.getElementById(`chevron-${Number(trackId)}`);
-            if (!details) return;
-            const opening = details.classList.contains('hidden');
-            details.classList.toggle('hidden', !opening);
-            if (chevron) chevron.classList.toggle('rotate-180', opening);
-        }
-
-        function updatePaginationUI(stats) {
-            totalTracks = stats.total;
-            totalPages = stats.totalPages;
-            currentPage = stats.page;
-
-            document.getElementById('stat-total').innerText = stats.total;
-            document.getElementById('stat-library').innerText = stats.library;
-
-            const start = stats.filtered === 0 ? 0 : (currentPage - 1) * (stats.limit === 'all' ? stats.filtered : stats.limit) + 1;
-            const end = stats.limit === 'all' ? stats.filtered : Math.min(currentPage * stats.limit, stats.filtered);
-
-            document.getElementById('page-start-count').innerText = start;
-            document.getElementById('page-end-count').innerText = end;
-            document.getElementById('page-total-count').innerText = stats.filtered;
-            document.getElementById('page-indicator').innerText = `Page ${currentPage} of ${totalPages}`;
-
-            document.getElementById('btn-first-page').disabled = currentPage <= 1;
-            document.getElementById('btn-prev-page').disabled = currentPage <= 1;
-            document.getElementById('btn-next-page').disabled = currentPage >= totalPages;
-            document.getElementById('btn-last-page').disabled = currentPage >= totalPages;
-        }
-
-        function handleSearchInput() {
-            clearTimeout(searchDebounce);
-            searchDebounce = setTimeout(() => {
-                currentPage = 1;
-                loadCatalog();
-            }, 300);
-        }
-
-        function resetPageAndLoad() { currentPage = 1; loadCatalog(); }
-        function handleSortByChange() {
-            currentPage = 1;
-
-            if (document.getElementById('sort-by').value === 'added') {
-                document.getElementById('sort-order').value = 'desc';
-            }
-            loadCatalog();
-        }
-        function changePage(delta) { goToPage(currentPage + delta); }
-        function goToPage(page) {
-            if (page >= 1 && page <= totalPages) {
-                currentPage = page;
-                loadCatalog();
-            }
-        }
-
-        function styleCatalogTrackButton(button, inLibrary) {
-            button.className = `px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${inLibrary
-                ? 'bg-[#330816] hover:bg-[#66112c] text-[#ff80a8] border border-[#66112c]'
-                : 'bg-[#003B63] hover:bg-[#0092FC] text-[#00BBFC] border border-[#0092FC]'}`;
-        }
-
-        async function toggleTrack(trackId) {
-            const button = document.querySelector(`button[data-track-id="${Number(trackId)}"]`);
-            if (!button || button.disabled) return;
-            const wasInLibrary = button.dataset.inLibrary === 'true';
-            button.disabled = true;
-            button.innerText = wasInLibrary ? 'Removing…' : 'Adding…';
-            try {
-                const response = await fetch('/api/user/toggle-track', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ track_id: Number(trackId) })
-                });
-                const result = await response.json();
-                if (!response.ok || !result.success) throw new Error(result.message || `Could not ${wasInLibrary ? 'remove' : 'add'} this track.`);
-                const inLibrary = !!result.in_library;
-                button.dataset.inLibrary = inLibrary ? 'true' : 'false';
-                button.innerText = inLibrary ? 'Remove' : 'Add';
-                styleCatalogTrackButton(button, inLibrary);
-                const count = document.getElementById('stat-library');
-                if (count && inLibrary !== wasInLibrary) {
-                    const current = Number.parseInt(count.innerText, 10) || 0;
-                    count.innerText = String(Math.max(0, current + (inLibrary ? 1 : -1)));
-                }
-                const filter = document.getElementById('library-filter').value;
-                if ((inLibrary && filter === 'unadded') || (!inLibrary && filter === 'added')) {
-                    currentPage = 1;
-                    loadCatalog();
-                    return;
-                }
-                button.disabled = false;
-            } catch (error) {
-                button.innerText = wasInLibrary ? 'Remove' : 'Add';
-                styleCatalogTrackButton(button, wasInLibrary);
-                button.disabled = false;
-                showAlert('Library Update Failed', error.message || 'Could not update this track in your library.', false);
-            }
-        }
-
         function startManualScan() {
             startCatalogScan('/api/catalog/quick-scan', 'Starting quick scan...');
         }
@@ -1521,198 +1338,6 @@
             masterScanStatusPollInterval = setInterval(poll, 1000);
         }
 
-        function closeWantedTracksModal() { closeDeadFilesModal(); }
-
-        function updateWantedTracksModeUI() {
-            const mode = document.getElementById('wanted-tracks-mode').value;
-            const url = document.getElementById('wanted-tracks-post-url');
-            const needsPost = mode === 'post' || mode === 'both';
-            url.disabled = !needsPost;
-            url.required = needsPost;
-            url.classList.toggle('opacity-50', !needsPost);
-            const generateButton = document.getElementById('btn-generate-wanted-tracks');
-            if (generateButton) generateButton.innerText = mode === 'file' ? 'Generate Text Now' : 'Generate & Send Now';
-        }
-
-        function renderWantedTracksData(data) {
-            document.getElementById('wanted-tracks-mode').value = data.mode || 'file';
-            document.getElementById('wanted-tracks-post-url').value = data.post_url || '';
-            document.getElementById('wanted-tracks-file-path').innerText = data.file_path || 'Path unavailable';
-            const count = document.getElementById('wanted-tracks-count');
-            const preview = document.getElementById('wanted-tracks-preview');
-            const status = document.getElementById('wanted-tracks-status');
-
-            if (data.list_pending) {
-                count.innerText = 'Building current wanted list…';
-                preview.innerText = 'Preparing the current wanted list for the first time…';
-                status.innerText = 'The file location is ready. MILO is building a cached list so future opens do not repeat the full catalog comparison.';
-                updateWantedTracksModeUI();
-                return;
-            }
-            if (data.list_error) {
-                count.innerText = 'Unable to build list';
-                preview.innerText = 'Unable to load the current wanted list.';
-                status.innerText = data.list_error;
-                updateWantedTracksModeUI();
-                return;
-            }
-
-            count.innerText = `${Number(data.track_count) || 0} unique wanted track(s). Preview shows up to 30 lines.`;
-            preview.innerText = (data.preview || []).join('\n') || '(No currently wanted tracks.)';
-            if (data.last_generated_at) {
-                let resultText = `Last generated: ${new Date(data.last_generated_at).toLocaleString()} · ${Number(data.last_count) || 0} track(s).`;
-                if (data.last_result && data.last_result.message) resultText += `\n${data.last_result.message}`;
-                status.innerText = resultText;
-            } else {
-                status.innerText = 'No output has been generated yet. Automatic updates run after successful scans and playlist syncs.';
-            }
-            const skippedUnformatted = Number(data.skipped_unformatted_count) || 0;
-            if (skippedUnformatted > 0) {
-                status.innerText += `\n${skippedUnformatted} legacy unmatched entr${skippedUnformatted === 1 ? 'y was' : 'ies were'} omitted because MILO could not identify both artist and song title. Re-sync the source playlists to refresh those entries.`;
-            }
-            updateWantedTracksModeUI();
-        }
-
-        async function loadWantedTracksData(modalToken = null, retryingPendingList = false) {
-            const status = document.getElementById('wanted-tracks-status');
-            if (!retryingPendingList) {
-                if (wantedTracksLoadPollTimeout) clearTimeout(wantedTracksLoadPollTimeout);
-                wantedTracksLoadPollTimeout = null;
-                status.innerText = 'Loading wanted-track settings and the current list…';
-            }
-            try {
-                const response = await fetch('/api/admin/wanted-tracks', { cache: 'no-store' });
-                const data = await response.json();
-                if (!response.ok || !data.success) throw new Error(data.message || 'Could not load Wanted Tracks.');
-                if (modalToken != null && !isManagedModalCurrent('dead-files-modal', modalToken)) return;
-                renderWantedTracksData(data);
-                if (data.list_pending && modalToken != null && isManagedModalCurrent('dead-files-modal', modalToken)) {
-                    wantedTracksLoadPollTimeout = setTimeout(() => {
-                        wantedTracksLoadPollTimeout = null;
-                        if (isManagedModalCurrent('dead-files-modal', modalToken)) loadWantedTracksData(modalToken, true);
-                    }, 1200);
-                }
-            } catch (error) {
-                if (modalToken != null && !isManagedModalCurrent('dead-files-modal', modalToken)) return;
-                const message = error.message || 'Could not load Wanted Tracks settings.';
-                status.innerText = message;
-                document.getElementById('wanted-tracks-preview').innerText = 'Unable to load the current wanted list.';
-                document.getElementById('wanted-tracks-count').innerText = 'Unable to load list';
-                document.getElementById('wanted-tracks-file-path').innerText = 'Unable to load file path';
-            }
-        }
-        function openWantedTracksModal() {
-            openPoolMaintenanceModal('wanted-tracks');
-        }
-
-        function switchPoolMaintenanceTab(tab, reloadContent = true) {
-            const showWanted = tab === 'wanted-tracks' && !!document.getElementById('wanted-tracks-tab-panel');
-            const deadTab = document.getElementById('pool-tab-dead-files');
-            const wantedTab = document.getElementById('pool-tab-wanted-tracks');
-            const deadPanel = document.getElementById('dead-files-tab-panel');
-            const wantedPanel = document.getElementById('wanted-tracks-tab-panel');
-            const activeClasses = ['bg-[#2C53CA]', 'border-[#2B66FD]', 'text-[#ffffff]'];
-            const inactiveClasses = ['bg-[#000000]', 'border-[#216281]', 'text-[#b4b7c5]'];
-
-            if (deadTab) {
-                deadTab.setAttribute('aria-selected', String(!showWanted));
-                activeClasses.forEach(name => deadTab.classList.toggle(name, !showWanted));
-                inactiveClasses.forEach(name => deadTab.classList.toggle(name, showWanted));
-            }
-            if (wantedTab) {
-                wantedTab.setAttribute('aria-selected', String(showWanted));
-                activeClasses.forEach(name => wantedTab.classList.toggle(name, showWanted));
-                inactiveClasses.forEach(name => wantedTab.classList.toggle(name, !showWanted));
-            }
-            if (deadPanel) {
-                deadPanel.classList.toggle('hidden', showWanted);
-                deadPanel.classList.toggle('flex', !showWanted);
-            }
-            if (wantedPanel) {
-                wantedPanel.classList.toggle('hidden', !showWanted);
-                wantedPanel.classList.toggle('flex', showWanted);
-            }
-
-            if (!showWanted && wantedTracksLoadPollTimeout) {
-                clearTimeout(wantedTracksLoadPollTimeout);
-                wantedTracksLoadPollTimeout = null;
-            }
-            if (!reloadContent || activeManagedModalId !== 'dead-files-modal') return;
-            const modalToken = modalRequestGeneration;
-            if (showWanted) {
-                document.getElementById('wanted-tracks-preview').innerText = 'Loading wanted tracks…';
-                document.getElementById('wanted-tracks-count').innerText = 'Loading list…';
-                loadWantedTracksData(modalToken);
-            } else {
-                loadDeadFilesData(modalToken);
-            }
-        }
-
-        async function postWantedTracksSettings() {
-            const mode = document.getElementById('wanted-tracks-mode').value;
-            const post_url = document.getElementById('wanted-tracks-post-url').value.trim();
-            const response = await fetch('/api/admin/wanted-tracks/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ mode, post_url })
-            });
-            const data = await response.json();
-            if (!response.ok || !data.success) throw new Error(data.message || 'Could not save Wanted Tracks settings.');
-            return data;
-        }
-
-        async function saveWantedTracksSettings() {
-            const button = document.getElementById('btn-save-wanted-tracks');
-            const status = document.getElementById('wanted-tracks-status');
-            button.disabled = true;
-            status.innerText = 'Saving Wanted Tracks settings…';
-            try {
-                await postWantedTracksSettings();
-                const modalToken = activeManagedModalId === 'dead-files-modal' ? modalRequestGeneration : null;
-                await loadWantedTracksData(modalToken);
-                status.innerText = 'Wanted Tracks settings saved. Automatic updates will use these settings after scans and playlist syncs.';
-                status.classList.remove('text-[#ff80a8]');
-            } catch (error) {
-                status.innerText = error.message || 'Could not save Wanted Tracks settings.';
-            } finally {
-                button.disabled = false;
-            }
-        }
-
-        async function generateWantedTracksNow() {
-            const button = document.getElementById('btn-generate-wanted-tracks');
-            const saveButton = document.getElementById('btn-save-wanted-tracks');
-            const status = document.getElementById('wanted-tracks-status');
-            button.disabled = true;
-            saveButton.disabled = true;
-            status.innerText = 'Saving settings, rebuilding the deduplicated list, and delivering the configured output…';
-            try {
-                await postWantedTracksSettings();
-                const response = await fetch('/api/admin/wanted-tracks/generate', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({})
-                });
-                const result = await response.json();
-                if (result.preview) {
-                    document.getElementById('wanted-tracks-count').innerText = `${Number(result.count) || 0} unique wanted track(s). Preview shows up to 30 lines.`;
-                    document.getElementById('wanted-tracks-preview').innerText = result.preview.join('\n') || '(No currently wanted tracks.)';
-                }
-                status.innerText = result.message || (result.success ? 'Wanted Tracks generated.' : 'Wanted Tracks generation had a problem.');
-                if (!response.ok || !result.success) status.classList.add('text-[#ff80a8]');
-                else status.classList.remove('text-[#ff80a8]');
-                if (result.generatedAt) {
-                    status.innerText += `\nGenerated: ${new Date(result.generatedAt).toLocaleString()}`;
-                }
-            } catch (error) {
-                status.innerText = error.message || 'Could not generate or send Wanted Tracks.';
-                status.classList.add('text-[#ff80a8]');
-            } finally {
-                button.disabled = false;
-                saveButton.disabled = false;
-            }
-        }
-
         function openScanSettings() {
             const modalToken = showManagedModal('scan-settings-modal');
             document.getElementById('scan-settings-loading').classList.remove('hidden');
@@ -1726,7 +1351,7 @@
                     document.getElementById('sys-rescan-interval').value = data.master_scan_interval || 0;
                     document.getElementById('sys-incremental-scan-interval').value = data.incremental_scan_interval || 0;
                     document.getElementById('sys-auto-approve-metadata').checked = data.auto_approve_metadata === true;
-                    document.getElementById('sys-trash-folder').value = data.trash_folder || '';
+                    document.getElementById('sys-trash-folder').value = normalizeDisplayedPath(data.trash_folder || '');
                     document.getElementById('sys-organizer-script').value = (data.organizer && data.organizer.naming_script) || ['$if2(%albumartist%,%artist%)/', '', '$if2(%album%,%title% \\(Single\\))$if($if2(%originaldate%,%date%), \\($left($if2(%originaldate%,%date%),4)\\),)/', '', '$if($gt(%totaldiscs%,1),%discnumber%-,)', '', '$if(%tracknumber%,$num(%tracknumber%,2) - ,)', '', '$if(%_multiartist%,%artist% - ,)', '', '%title%', '', '$if($eq(%_extension%,flac),$if($eq(%_bits_per_sample%,24), [FLAC 24bit], [FLAC]),$if($eq(%_codec%,ALAC), [ALAC],$if($eq(%_extension%,mp3), [MP3-%_bitrate%k],)))'].join('\n');
                     document.getElementById('sys-organizer-rename').checked = !!(data.organizer && data.organizer.rename_files === '1');
 
@@ -1775,7 +1400,7 @@
                 const row = document.createElement('div');
                 row.className = 'flex items-center justify-between bg-[#000012] p-2.5 rounded-lg border border-[#2a2e43] text-xs';
                 row.innerHTML = `
-                    <span class="font-mono text-[#ffffff] truncate mr-2">${escapeHtml(folder)}</span>
+                    <span class="font-mono text-[#ffffff] truncate mr-2">${escapeHtml(normalizeDisplayedPath(folder))}</span>
                     <button onclick="removeExemptFolder(${idx})" class="text-[#ff80a8] hover:text-[#ff3366] transition-colors">Remove</button>
                 `;
                 list.appendChild(row);
@@ -1817,7 +1442,7 @@
                 });
 
                 row.innerHTML = `
-                    <span class="font-mono text-[#ffffff] truncate flex-1">${escapeHtml(folderPath)}</span>
+                    <span class="font-mono text-[#ffffff] truncate flex-1">${escapeHtml(normalizeDisplayedPath(folderPath))}</span>
                     <div class="flex items-center gap-2 w-full sm:w-auto">
                         <select onchange="updateDumpFolderUser(${idx}, this.value)" class="bg-[#000000] border border-[#2a2e43] text-[#00BBFC] text-xs rounded px-2 py-1 outline-none">
                             ${userOptions}
@@ -1966,318 +1591,6 @@
             organizerStatusPollInterval = setInterval(poll, 1000);
         }
 
-        function openOrganizerReviewModal() {
-            showManagedModal('organizer-review-modal', 'organizer-review-list', 'Loading organizer review…');
-            loadOrganizerReview(1);
-        }
-
-        function closeOrganizerReviewModal() {
-            organizerReviewLoadToken++;
-            closeManagedModal('organizer-review-modal');
-        }
-
-        function organizerReviewFilters() {
-            return {
-                kind: document.getElementById('organizer-review-kind')?.value || 'all',
-                search: document.getElementById('organizer-review-search')?.value.trim() || '',
-                location: document.getElementById('organizer-review-location')?.value || 'all',
-                limit: document.getElementById('organizer-review-limit')?.value || '50'
-            };
-        }
-
-        function organizerReviewFiltersChanged() {
-            if (organizerReviewSearchDebounce) clearTimeout(organizerReviewSearchDebounce);
-            organizerSelectedIds.clear();
-            organizerSelectAllFiltered = false;
-            organizerReviewCurrentPage = 1;
-            loadOrganizerReview(1);
-        }
-
-        function queueOrganizerReviewSearch() {
-            if (organizerReviewSearchDebounce) clearTimeout(organizerReviewSearchDebounce);
-            organizerReviewSearchDebounce = setTimeout(organizerReviewFiltersChanged, 300);
-        }
-
-        function refreshOrganizerReviewCount() {
-            const badge = document.getElementById('organizer-review-count');
-            if (!badge) return;
-            fetch('/api/admin/organizer/review?limit=10')
-                .then(r => r.json())
-                .then(data => { if (data.success) badge.innerText = String(data.count || 0); })
-                .catch(() => {});
-        }
-
-        function loadOrganizerReview(page = organizerReviewCurrentPage) {
-            const list = document.getElementById('organizer-review-list');
-            if (!list) return;
-            const loadToken = ++organizerReviewLoadToken;
-            const modalToken = modalRequestGeneration;
-            const filters = organizerReviewFilters();
-            const requestedPage = Math.max(1, Number(page) || 1);
-            list.innerHTML = '<div class="text-sm text-[#7a7d90]">Loading organizer review items...</div>';
-            const query = new URLSearchParams({ kind: filters.kind, q: filters.search, location: filters.location, page: String(requestedPage), limit: filters.limit });
-            fetch(`/api/admin/organizer/review?${query.toString()}`)
-                .then(r => r.json())
-                .then(data => {
-                    if (loadToken !== organizerReviewLoadToken || !isManagedModalCurrent('organizer-review-modal', modalToken)) return;
-                    if (!data.success) {
-                        list.innerHTML = `<div class="text-sm text-[#ff80a8]">${escapeHtml(data.message || 'Unable to load review items.')}</div>`;
-                        return;
-                    }
-                    const badge = document.getElementById('organizer-review-count');
-                    if (badge) badge.innerText = String(data.count || 0);
-                    organizerCurrentItems = data.items || [];
-                    organizerReviewCurrentPage = data.page || requestedPage;
-                    organizerReviewPages = data.pages || 1;
-                    organizerReviewFilteredCount = data.filteredCount || 0;
-                    document.getElementById('organizer-review-result-count').innerText = `${data.filteredCount || 0} matching review items · ${data.count || 0} pending total`;
-                    document.getElementById('organizer-review-page-info').innerText = `Page ${organizerReviewCurrentPage} of ${organizerReviewPages}`;
-                    document.getElementById('organizer-review-prev').disabled = organizerReviewCurrentPage <= 1;
-                    document.getElementById('organizer-review-next').disabled = organizerReviewCurrentPage >= organizerReviewPages;
-                    document.getElementById('organizer-select-filtered').innerText = organizerSelectAllFiltered
-                        ? `All ${data.filteredCount || 0} filtered results selected`
-                        : `Select all ${data.filteredCount || 0} filtered results`;
-                    const visibleSelect = document.getElementById('organizer-select-visible');
-                    visibleSelect.checked = !organizerSelectAllFiltered && organizerCurrentItems.length > 0 && organizerCurrentItems.every(item => organizerSelectedIds.has(Number(item.id)));
-                    visibleSelect.disabled = organizerSelectAllFiltered || organizerCurrentItems.length === 0;
-                    if (!organizerCurrentItems.length) {
-                        list.innerHTML = '<div class="bg-[#000000] border border-[#2a2e43] rounded-xl p-6 text-sm text-[#7a7d90] text-center">No organizer items match these filters.</div>';
-                        updateOrganizerSelectionSummary();
-                        return;
-                    }
-                    list.innerHTML = '';
-                    organizerCurrentItems.forEach(item => {
-                        const row = document.createElement('div');
-                        row.className = 'bg-[#000000] border border-[#2a2e43] rounded-xl p-4 space-y-3';
-                        const confidence = `${Math.round((Number(item.confidence) || 0) * 100)}%`;
-                        const tags = item.tags || {};
-                        const embedded = item.embedded || {};
-                        const matchedMetadata = item.matched_metadata || {};
-                        const category = item.kind === 'duplicate' ? 'Exact Duplicate' : item.kind === 'path_conflict' ? 'Naming-Path Conflict' : item.kind === 'quality_upgrade' ? 'Higher-Quality Version Available' : item.kind === 'similar' ? 'Similar Metadata · Different Path' : item.kind === 'low_match' ? 'Possible Match · Incomplete Tags' : item.kind === 'error' ? 'Organizer Error' : 'Metadata Approval Required';
-                        const matchedBlock = item.matched_path
-                            ? (item.match_is_meaningful
-                                ? `<div><span class="text-[#00BBFC] font-semibold">Compared with existing pool file:</span><div class="font-mono text-xs text-[#d5d7e0] break-all mt-1">${escapeHtml(item.matched_path)}</div><div class="text-[11px] text-[#7a7d90] mt-1">Metadata match confidence: ${confidence}${item.matched_exists ? '' : ' · recorded match path is missing'}</div></div>`
-                                : `<div><span class="text-[#A05AFA] font-semibold">Naming destination is occupied:</span><div class="font-mono text-xs text-[#d5d7e0] break-all mt-1">${escapeHtml(item.matched_path)}</div><div class="text-[11px] text-[#7a7d90] mt-1">The embedded metadata does not support identifying this as the same song. This is a path conflict, not a duplicate match.</div></div>`)
-                            : '<div class="text-xs text-[#7a7d90]">No existing pool file has been linked as a metadata match.</div>';
-                        const metadataBlock = item.matched_path && item.match_is_meaningful
-                            ? renderOrganizerMetadataComparison(embedded, matchedMetadata)
-                            : renderOrganizerMetadataFallback(embedded, tags);
-                        let actions = '';
-                        if (item.candidate_in_trash) {
-                            actions += `<button onclick="resolveOrganizerReview(${item.id}, 'delete')" class="px-3 py-2 rounded-lg bg-[#61152b] hover:bg-[#8b1b3d] text-xs font-semibold">Delete Candidate (Trash)</button>`;
-                        } else {
-                            actions += `<button onclick="resolveOrganizerReview(${item.id}, 'stage_trash')" class="px-3 py-2 rounded-lg bg-[#814AC8] hover:bg-[#A05AFA] text-xs font-semibold">Move Candidate to Trash</button>`;
-                        }
-                        if (item.matched_path) {
-                            if (item.matched_exists && item.is_quality_upgrade) {
-                                actions += `<button onclick="resolveOrganizerReview(${item.id}, 'upgrade')" class="px-3 py-2 rounded-lg bg-[#1A76C9] hover:bg-[#0092FC] text-xs font-semibold">Upgrade Pool Version</button>`;
-                            } else if (item.matched_exists && item.can_overwrite) {
-
-                                actions += `<button onclick="resolveOrganizerReview(${item.id}, 'overwrite')" class="px-3 py-2 rounded-lg bg-[#713CCC] hover:bg-[#8A48FF] text-xs font-semibold">Overwrite Pool Song</button>`;
-                            }
-                            if (item.kind !== 'duplicate') {
-                                actions += `<button onclick="resolveOrganizerReview(${item.id}, 'keep_both')" class="px-3 py-2 rounded-lg bg-[#2C53CA] hover:bg-[#2B66FD] text-xs font-semibold">Keep Both / Organize Separately</button>`;
-                            }
-                        } else {
-                            actions += `<button onclick="resolveOrganizerReview(${item.id}, 'approve')" class="px-3 py-2 rounded-lg bg-[#2C53CA] hover:bg-[#2B66FD] text-xs font-semibold">Approve &amp; Organize</button>`;
-                        }
-                        if (!item.candidate_in_trash) {
-                            actions += `<button onclick="resolveOrganizerReview(${item.id}, 'keep_dump')" class="px-3 py-2 rounded-lg bg-[#1d202f] hover:bg-[#2a2e43] border border-[#2a2e43] text-xs font-semibold">Keep in Dump</button>`;
-                        }
-                        const isSelected = organizerSelectAllFiltered || organizerSelectedIds.has(Number(item.id));
-                        row.innerHTML = `
-                            <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
-                                <div class="flex gap-3 min-w-0">
-                                    <input type="checkbox" class="mt-1 accent-[#2B66FD] shrink-0" aria-label="Select review item ${item.id}" ${isSelected ? 'checked' : ''} ${organizerSelectAllFiltered ? 'disabled' : ''} onchange="toggleOrganizerItemSelection(${item.id}, this.checked)">
-                                    <div class="min-w-0">
-                                        <div class="text-sm font-semibold text-[#ffffff]">${escapeHtml(category)}</div>
-                                        <div class="text-xs text-[#b4b7c5] mt-1">${escapeHtml(item.reason || '')}</div>
-                                    </div>
-                                </div>
-                                <div class="flex items-center gap-2 self-start shrink-0">
-                                    <span class="text-[10px] uppercase tracking-wider text-[#00BBFC] border border-[#216281] rounded-md px-2 py-1">${escapeHtml(item.kind)}</span>
-                                    <span class="text-[10px] text-[#7a7d90]">#${item.id}</span>
-                                </div>
-                            </div>
-                            <div><div class="text-[10px] uppercase tracking-wider text-[#7a7d90] mb-1">Candidate file</div><div class="font-mono text-xs text-[#ffffff] break-all">${escapeHtml(item.candidate_path || item.source_path || '')}</div></div>
-                            ${matchedBlock}
-                            ${metadataBlock}
-                            ${item.planned_path ? `<div><div class="text-[10px] uppercase tracking-wider text-[#7a7d90] mb-1">Planned destination</div><div class="font-mono text-xs text-[#b4b7c5] break-all">${escapeHtml(item.planned_path)}</div></div>` : `<div><div class="text-[10px] uppercase tracking-wider text-[#7a7d90] mb-1">Planned destination</div><div class="font-mono text-xs text-[#ff80a8] break-all">Not generated — the naming script needs more usable tag values, or it produced an invalid path.</div></div>`}
-                            <div class="text-[11px] text-[#7a7d90]">${item.is_quality_upgrade ? 'The candidate appears to be a better-quality encoding. Upgrade preserves the existing pool version in Trash and updates the catalog to the new path.' : item.matched_path ? (item.can_overwrite ? 'Overwrite is available for this meaningful possible match. MILO preserves the old pool file in Trash first. Keep Both organizes this candidate separately.' : (item.match_is_meaningful ? 'The metadata suggests the same track, but overwrite is not available for this file format or evidence level. Keep Both preserves both files.' : 'This path is occupied by a file whose embedded metadata does not identify it as the same song. Overwrite is disabled; Keep Both preserves both files.')) : 'Approve & Organize explicitly allows this reviewed file into the pool using your naming script. Incomplete embedded metadata is never organized automatically.'}</div>
-                            <div class="flex flex-wrap gap-2 pt-1">${actions}</div>
-                        `;
-                        list.appendChild(row);
-                    });
-                    updateOrganizerSelectionSummary();
-                })
-                .catch(() => { list.innerHTML = '<div class="text-sm text-[#ff80a8]">Could not contact the organizer review endpoint.</div>'; });
-        }
-
-        function organizerMetadataValue(tags, field) {
-            tags = tags || {};
-            if (field === 'artist') return tags.artist || '';
-            if (field === 'albumartist') return tags.albumartist || '';
-            if (field === 'date') return tags.originaldate || tags.date || '';
-            if (field === 'track') return tags.tracknumber || '';
-            if (field === 'disc') return tags.totaldiscs ? `${tags.discnumber || '?'} / ${tags.totaldiscs}` : (tags.discnumber || '');
-            if (field === 'duration') return Number(tags.duration) > 0 ? formatOrganizerDuration(tags.duration) : '';
-            if (field === 'format') return tags._codec || String(tags._extension || '').toUpperCase();
-            if (field === 'bitrate') return tags._bitrate ? `${tags._bitrate} kbps` : '';
-            return tags[field] || '';
-        }
-
-        function formatOrganizerDuration(value) {
-            const seconds = Number(value);
-            if (!Number.isFinite(seconds) || seconds <= 0) return 'Unknown';
-            const total = Math.round(seconds);
-            const hours = Math.floor(total / 3600);
-            const minutes = Math.floor((total % 3600) / 60);
-            const remaining = total % 60;
-            return hours > 0 ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remaining).padStart(2, '0')}` : `${minutes}:${String(remaining).padStart(2, '0')}`;
-        }
-
-        function organizerCompareEqual(field, left, right) {
-            if (!left || !right || left === 'Unknown' || right === 'Unknown') return null;
-            if (field === 'duration') return Math.abs(Number(left) - Number(right)) <= 1.5;
-            const normalize = value => String(value).normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().toLowerCase();
-            return normalize(left) === normalize(right);
-        }
-
-        function renderOrganizerMetadataComparison(candidate, matched) {
-            const fields = [['Title', 'title'], ['Artist', 'artist'], ['Album Artist', 'albumartist'], ['Album', 'album'], ['Original Date / Date', 'date'], ['Track', 'track'], ['Disc', 'disc'], ['Duration', 'duration'], ['Format / Codec', 'format'], ['Bitrate', 'bitrate']];
-            const rows = fields.map(([label, field]) => {
-                const leftRaw = organizerMetadataValue(candidate, field);
-                const rightRaw = organizerMetadataValue(matched, field);
-                const left = leftRaw || 'Missing';
-                const right = rightRaw || 'Missing';
-                const equal = field === 'duration'
-                    ? organizerCompareEqual(field, candidate.duration, matched.duration)
-                    : organizerCompareEqual(field, leftRaw, rightRaw);
-                const status = equal === null ? 'Not enough data' : equal ? 'Match' : 'Different';
-                const statusClass = equal === null ? 'text-[#7a7d90]' : equal ? 'text-[#00BBFC]' : 'text-[#ff80a8]';
-                return `<tr class="border-t border-[#2a2e43]"><td class="p-2 text-[#7a7d90] whitespace-nowrap">${label}</td><td class="p-2 text-[#ffffff] break-words">${escapeHtml(left)}</td><td class="p-2 text-[#ffffff] break-words">${escapeHtml(right)}</td><td class="p-2 ${statusClass} whitespace-nowrap">${status}</td></tr>`;
-            }).join('');
-            return `<div class="bg-[#000012] border border-[#216281] rounded-lg overflow-hidden"><div class="p-3 text-[10px] uppercase tracking-wider text-[#00BBFC] font-semibold">Embedded metadata comparison</div><div class="overflow-x-auto"><table class="w-full text-xs text-left"><thead class="bg-[#000000] text-[#b4b7c5]"><tr><th class="p-2 font-semibold">Field</th><th class="p-2 font-semibold">Candidate (embedded)</th><th class="p-2 font-semibold">Existing pool file</th><th class="p-2 font-semibold">Comparison</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
-        }
-
-        function renderOrganizerMetadataFallback(embedded, suggested) {
-            const fields = [['Title', 'title'], ['Artist', 'artist'], ['Album Artist', 'albumartist'], ['Album', 'album'], ['Original Date / Date', 'date'], ['Track', 'track'], ['Disc', 'disc'], ['Duration', 'duration']];
-            const embeddedCell = (tags, field) => escapeHtml(organizerMetadataValue(tags, field) || 'Missing');
-            const hintFields = [
-                ['Title from filename', suggested.source_path_title || (!embedded.title ? suggested.title : '')],
-                ['Artist from folders', suggested.source_path_artist || (!embedded.artist && !embedded.albumartist ? suggested.artist : '')],
-                ['Album from folders', suggested.source_path_album || (!embedded.album ? suggested.album : '')]
-            ];
-            const hintCell = value => escapeHtml(value || 'No path clue');
-            return `<div class="grid grid-cols-1 lg:grid-cols-2 gap-2 text-xs"><div class="bg-[#000012] border border-[#2a2e43] rounded-lg p-3"><div class="text-[10px] uppercase tracking-wider text-[#00BBFC] mb-2">Candidate embedded metadata</div>${fields.map(([label, field]) => `<div class="grid grid-cols-[8rem_1fr] gap-2 py-1 border-t border-[#2a2e43]/70"><span class="text-[#7a7d90]">${label}</span><span class="text-[#d5d7e0] break-words">${embeddedCell(embedded, field)}</span></div>`).join('')}</div><div class="bg-[#000012] border border-[#2a2e43] rounded-lg p-3"><div class="text-[10px] uppercase tracking-wider text-[#7a7d90] mb-2">Path / filename clues only — not embedded tags</div>${hintFields.map(([label, value]) => `<div class="grid grid-cols-[8rem_1fr] gap-2 py-1 border-t border-[#2a2e43]/70"><span class="text-[#7a7d90]">${label}</span><span class="text-[#d5d7e0] break-words">${hintCell(value)}</span></div>`).join('')}</div></div>`;
-        }
-
-        function updateOrganizerSelectionSummary() {
-            const summary = document.getElementById('organizer-selection-summary');
-            if (!summary) return;
-            summary.innerText = organizerSelectAllFiltered
-                ? `${organizerReviewFilteredCount} filtered items selected`
-                : `${organizerSelectedIds.size} selected across pages`;
-        }
-
-        function toggleOrganizerItemSelection(id, checked) {
-            const key = Number(id);
-            if (checked) organizerSelectedIds.add(key);
-            else organizerSelectedIds.delete(key);
-            const visibleSelect = document.getElementById('organizer-select-visible');
-            if (visibleSelect) visibleSelect.checked = !organizerSelectAllFiltered && organizerCurrentItems.length > 0 && organizerCurrentItems.every(item => organizerSelectedIds.has(Number(item.id)));
-            updateOrganizerSelectionSummary();
-        }
-
-        function toggleOrganizerVisibleSelection(checked) {
-            if (organizerSelectAllFiltered) return;
-            organizerCurrentItems.forEach(item => {
-                const key = Number(item.id);
-                if (checked) organizerSelectedIds.add(key);
-                else organizerSelectedIds.delete(key);
-            });
-            loadOrganizerReview(organizerReviewCurrentPage);
-        }
-
-        function selectAllOrganizerFiltered() {
-            if (!organizerReviewFilteredCount) return;
-            organizerSelectAllFiltered = true;
-            organizerSelectedIds.clear();
-            loadOrganizerReview(organizerReviewCurrentPage);
-        }
-
-        function clearOrganizerSelection() {
-            organizerSelectAllFiltered = false;
-            organizerSelectedIds.clear();
-            loadOrganizerReview(organizerReviewCurrentPage);
-        }
-
-        async function runOrganizerBulkAction() {
-            const action = document.getElementById('organizer-bulk-action').value;
-            if (!organizerSelectAllFiltered && !organizerSelectedIds.size) {
-                showAlert('Organizer Review', 'Select one or more review items first.', false);
-                return;
-            }
-            if (action === 'delete' && !(await showConfirm('Delete Candidates', 'Permanently delete selected candidates that are physically inside the configured Trash folder? Items outside Trash will fail safely.', 'Delete'))) return;
-            if (action === 'overwrite' && !(await showConfirm('Overwrite Pool Songs', 'Overwrite the matched pool songs? Each existing pool file will first be preserved in Trash. Items without a valid match will fail safely.', 'Overwrite'))) return;
-            if (action === 'upgrade' && !(await showConfirm('Upgrade Pool Songs', 'Upgrade selected tracks to a higher-quality version? The existing pool version will be preserved in Trash and the catalog path will be updated.', 'Upgrade'))) return;
-            if (action === 'approve' && !(await showConfirm('Approve Unmatched Files', 'Approve and organize selected unmatched files using the saved naming script? Files that have an existing match will not be approved by this action.', 'Approve'))) return;
-            const filters = organizerReviewFilters();
-            const payload = organizerSelectAllFiltered
-                ? { allFiltered: true, filters: { kind: filters.kind, search: filters.search, location: filters.location }, action }
-                : { ids: [...organizerSelectedIds], action };
-            activeProgressJobType = 'bulk-review';
-            closeOrganizerReviewModal();
-            showOrganizerProgressPanel({ status: 'running', progress: 0, total: organizerSelectAllFiltered ? organizerReviewFilteredCount : organizerSelectedIds.size, message: 'Starting bulk organizer review...' });
-            fetch('/api/admin/organizer/review/bulk', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-            })
-                .then(r => r.json())
-                .then(res => {
-                    if (!res.success) {
-                        activeProgressJobType = null;
-                        document.getElementById('job-progress-container').classList.add('hidden');
-                        document.getElementById('job-action-container').classList.add('hidden');
-                        openOrganizerReviewModal();
-                        showAlert('Organizer Review', res.message || 'Bulk action could not be started.', false);
-                        return;
-                    }
-                    organizerSelectedIds.clear();
-                    organizerSelectAllFiltered = false;
-                    pollOrganizerStatus();
-                })
-                .catch(() => {
-                    activeProgressJobType = null;
-                    document.getElementById('job-progress-container').classList.add('hidden');
-                    document.getElementById('job-action-container').classList.add('hidden');
-                    openOrganizerReviewModal();
-                    showAlert('Organizer Error', 'Could not contact the bulk review endpoint.', false);
-                });
-        }
-
-        async function resolveOrganizerReview(id, action) {
-            if (action === 'delete' && !(await showConfirm('Delete Candidate', 'Permanently delete this candidate from the configured Trash folder? This cannot be undone.', 'Delete'))) return;
-            if (action === 'overwrite' && !(await showConfirm('Replace Pool Song', 'Replace the matched pool song? The existing pool file will first be preserved in the configured Trash folder.', 'Replace'))) return;
-            if (action === 'upgrade' && !(await showConfirm('Upgrade Pool Song', 'Upgrade to this verified higher-quality version? The old pool file will be preserved in Trash and the catalog path updated.', 'Upgrade'))) return;
-            fetch(`/api/admin/organizer/review/${id}/action`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action })
-            })
-            .then(r => r.json())
-            .then(res => {
-                if (!res.success) {
-                    showAlert('Organizer Review', res.message || 'The review action could not be completed.', false);
-                    return;
-                }
-                loadOrganizerReview(organizerReviewCurrentPage);
-                refreshOrganizerReviewCount();
-                if (typeof loadCatalog === 'function') loadCatalog();
-                if (action !== 'stage_trash') showAlert('Organizer Review', res.message || 'Review action completed.', true);
-            })
-            .catch(() => showAlert('Organizer Error', 'Could not contact the organizer review endpoint.', false));
-        }
-
         function openUserManager() {
             showManagedModal('user-manager-modal');
             loadUsersList();
@@ -2300,9 +1613,9 @@
                             <td class="p-3 font-semibold text-[#ffffff]">${escapeHtml(u.username)}</td>
                             <td class="p-3 text-[#b4b7c5]">${escapeHtml(u.role)}</td>
                             <td class="p-3 text-[#00BBFC] font-mono">${escapeHtml(u.index_mode || 'standard')}</td>
-                            <td class="p-3 text-[#7a7d90] font-mono">${escapeHtml(u.library_path)}</td>
+                            <td class="p-3 text-[#7a7d90] font-mono">${escapeHtml(normalizeDisplayedPath(u.library_path))}</td>
                             <td class="p-3 text-right space-x-2">
-                                <button type="button" data-user-id="${Number(u.id)}" data-username="${escapeHtml(u.username)}" data-library-path="${escapeHtml(u.library_path)}" data-index-mode="${escapeHtml(u.index_mode || 'standard')}" data-role="${escapeHtml(u.role || 'user')}" onclick="editUserFromButton(this)" class="text-[#00BBFC] hover:underline">Edit</button>
+                                <button type="button" data-user-id="${Number(u.id)}" data-username="${escapeHtml(u.username)}" data-library-path="${escapeHtml(normalizeDisplayedPath(u.library_path))}" data-index-mode="${escapeHtml(u.index_mode || 'standard')}" data-role="${escapeHtml(u.role || 'user')}" onclick="editUserFromButton(this)" class="text-[#00BBFC] hover:underline">Edit</button>
                                 ${u.role !== 'admin' ? `<button onclick="deleteUser(${u.id})" class="text-[#ff80a8] hover:underline">Delete</button>` : ''}
                             </td>
                         `;
@@ -2437,112 +1750,6 @@
             if (modal && !modal.classList.contains('hidden') && activeManagedModalId === 'user-manager-modal') loadUsersList();
         }
 
-        function openDeadFilesModal() {
-            openPoolMaintenanceModal('dead-files');
-        }
-
-        function openPoolMaintenanceModal(tab = 'dead-files') {
-            const modalToken = showManagedModal('dead-files-modal', tab === 'dead-files' ? 'dead-files-container' : null, 'Loading Pool Maintenance…');
-            switchPoolMaintenanceTab(tab, false);
-            if (tab === 'wanted-tracks') {
-                document.getElementById('wanted-tracks-preview').innerText = 'Loading wanted tracks…';
-                document.getElementById('wanted-tracks-count').innerText = 'Loading list…';
-                loadWantedTracksData(modalToken);
-            } else {
-                loadDeadFilesData(modalToken);
-            }
-        }
-
-        function loadDeadFilesData(modalToken) {
-            document.getElementById('dead-files-count').innerText = 'Checking catalog folders…';
-            fetch('/api/admin/dead-files')
-                .then(async response => {
-                    const data = await response.json();
-                    if (!response.ok) throw new Error(data.message || 'Could not load missing catalog entries.');
-                    return data;
-                })
-                .then(files => {
-                    if (!isManagedModalCurrent('dead-files-modal', modalToken)) return;
-                    const container = document.getElementById('dead-files-container');
-                    container.innerHTML = '';
-                    deadFileRepairChoices = new Map();
-                    if (!Array.isArray(files)) {
-                        container.innerHTML = `<div class="text-xs text-[#ff80a8] text-center p-4">${escapeHtml(files.message || 'Could not load missing catalog entries.')}</div>`;
-                        document.getElementById('dead-files-count').innerText = 'Unable to load missing files';
-                        updateDeadFileSelectionUI();
-                        return;
-                    }
-                    document.getElementById('dead-files-count').innerText = `${files.length} dead catalog entries detected`;
-                    if (!files.length) {
-                        deadFileSelectedIds.clear();
-                        container.innerHTML = `<div class="text-xs text-[#7a7d90] text-center p-4">No missing catalog files detected.</div>`;
-                    } else {
-                        files.forEach(f => {
-                            const row = document.createElement('div');
-                            row.className = 'bg-[#000012] border border-[#2a2e43] rounded-lg p-3 space-y-2';
-                            const replacement = f.replacement;
-                            const deadId = Number(f.id);
-                            if (replacement && replacement.path) deadFileRepairChoices.set(deadId, replacement.path);
-                            const selectable = !!(replacement && replacement.path);
-                            const selected = deadFileSelectedIds.has(deadId) && selectable;
-                            row.innerHTML = `
-                                <div class="flex items-start gap-2">
-                                    <input type="checkbox" ${selectable ? '' : 'disabled'} ${selected ? 'checked' : ''} onchange="toggleDeadFileSelection(${deadId}, this.checked)" class="mt-1 accent-[#2B66FD] disabled:opacity-30" aria-label="Select ${escapeHtml(f.title || 'catalog entry')} for repair">
-                                    <div class="text-sm font-semibold text-[#ffffff] min-w-0">${escapeHtml(f.artist || 'Unknown artist')} — ${escapeHtml(f.title || 'Unknown title')}</div>
-                                </div>
-                                <div><div class="text-[10px] uppercase text-[#7a7d90] mb-1">Missing catalog path</div><div class="font-mono text-xs text-[#ff80a8] break-all">${escapeHtml(f.path || '')}</div></div>
-                                ${f.album ? `<div class="text-[11px] text-[#7a7d90]">Album: ${escapeHtml(f.album)}</div>` : ''}
-                                ${replacement ? `<div class="border-t border-[#2a2e43] pt-2 space-y-1"><div class="text-[10px] uppercase text-[#00BBFC]">Possible replacement · ${escapeHtml(replacement.format || 'Audio')}${replacement.is_higher_quality ? ' · Higher quality' : ''}</div><div class="font-mono text-xs text-[#d5d7e0] break-all">${escapeHtml(replacement.path)}</div><div class="text-[11px] text-[#b4b7c5]">${escapeHtml(replacement.artist || 'Unknown artist')} — ${escapeHtml(replacement.title || 'Unknown title')}${replacement.album ? ` · ${escapeHtml(replacement.album)}` : ''}</div><div class="text-[11px] text-[#7a7d90]">${replacement.duration ? `Duration: ${formatOrganizerDuration(replacement.duration)}` : 'Duration: Unknown'}${replacement.bitrate ? ` · ${escapeHtml(String(replacement.bitrate))} kbps` : ''}${replacement.bit_depth ? ` · ${escapeHtml(String(replacement.bit_depth))}-bit` : ''} · Missing entry format: ${escapeHtml(f.missing_format || 'Unknown')}</div><div class="text-[11px] ${replacement.album_match ? 'text-[#00BBFC]' : 'text-[#A05AFA]'}">${escapeHtml(replacement.message || '')}</div><button data-dead-id="${deadId}" data-replacement="${escapeHtml(replacement.path)}" onclick="repairDeadFileFromButton(this)" class="mt-1 px-3 py-2 rounded-lg bg-[#1A76C9] hover:bg-[#0092FC] text-xs font-semibold">Repair Catalog Path</button></div>` : (f.ambiguous_matches ? `<div class="text-[11px] text-[#A05AFA]">Several files have matching title and artist metadata, and there is no unique replacement. Run a rescan or verify the files manually.</div>` : `<div class="text-[11px] text-[#7a7d90]">No replacement with matching embedded title and artist was found.</div>`)}
-                                <div class="flex justify-end border-t border-[#2a2e43] pt-2"><button onclick="clearDeadFile(${deadId})" class="px-3 py-2 rounded-lg bg-[#330816] hover:bg-[#66112c] text-xs font-semibold text-[#ff80a8]">Clear Stale Catalog Entry</button></div>
-                            `;
-                            container.appendChild(row);
-                        });
-                    }
-                    for (const id of [...deadFileSelectedIds]) {
-                        if (!deadFileRepairChoices.has(id)) deadFileSelectedIds.delete(id);
-                    }
-                    updateDeadFileSelectionUI();
-                })
-                .catch(error => {
-                    if (!isManagedModalCurrent('dead-files-modal', modalToken)) return;
-                    document.getElementById('dead-files-container').innerHTML = `<div class="text-xs text-[#ff80a8] text-center p-4">${escapeHtml(error.message || 'Could not contact the Dead Files endpoint.')}</div>`;
-                    document.getElementById('dead-files-count').innerText = 'Unable to load missing files';
-                    updateDeadFileSelectionUI();
-                });
-        }
-
-        function updateDeadFileSelectionUI() {
-            const selectedCount = [...deadFileSelectedIds].filter(id => deadFileRepairChoices.has(id)).length;
-            const repairableCount = deadFileRepairChoices.size;
-            const count = document.getElementById('dead-files-selection-count');
-            const master = document.getElementById('dead-files-select-repairable');
-            const button = document.getElementById('btn-repair-dead-selected');
-            if (count) count.innerText = `${selectedCount} selected · ${repairableCount} repairable`;
-            if (button) button.disabled = selectedCount === 0;
-            if (master) {
-                master.checked = repairableCount > 0 && selectedCount === repairableCount;
-                master.indeterminate = selectedCount > 0 && selectedCount < repairableCount;
-                master.disabled = repairableCount === 0;
-            }
-        }
-
-        function toggleDeadFileSelection(id, checked) {
-            const deadId = Number(id);
-            if (!deadFileRepairChoices.has(deadId)) return;
-            if (checked) deadFileSelectedIds.add(deadId);
-            else deadFileSelectedIds.delete(deadId);
-            updateDeadFileSelectionUI();
-        }
-
-        function toggleDeadFileAllSelection(checked) {
-            if (checked) for (const id of deadFileRepairChoices.keys()) deadFileSelectedIds.add(Number(id));
-            else deadFileSelectedIds.clear();
-            document.querySelectorAll('#dead-files-container input[type="checkbox"]').forEach(input => {
-                if (!input.disabled) input.checked = !!checked;
-            });
-            updateDeadFileSelectionUI();
-        }
-
         function showSecondaryProgressPanel(data, jobType, actionLabel, actionHandler) {
             const container = document.getElementById('job-progress-container');
             if (!container) return;
@@ -2565,98 +1772,6 @@
             } else {
                 actions.classList.add('hidden');
             }
-        }
-
-        async function startDeadFileTask(endpoint, payload, initialMessage) {
-            closeDeadFilesModal();
-            showSecondaryProgressPanel({ status: 'running', progress: 0, total: payload && payload.items ? payload.items.length : 0, message: initialMessage }, 'dead-files-bulk', 'Open Dead Files', openDeadFilesModal);
-            try {
-                const response = await fetch(endpoint, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload || {})
-                });
-                const result = await response.json();
-                if (!response.ok || !result.success) throw new Error(result.message || 'Could not start the Dead Files task.');
-                deadFileSelectedIds.clear();
-                pollDeadFileJobStatus();
-            } catch (error) {
-                activeProgressJobType = null;
-                document.getElementById('job-progress-container').classList.add('hidden');
-                document.getElementById('job-action-container').classList.add('hidden');
-                openDeadFilesModal();
-                showAlert('Dead Files', error.message || 'Could not start the Dead Files task.', false);
-            }
-        }
-
-        async function pollDeadFileJobStatus(suppressCompletionAlert = false) {
-            if (deadFileStatusPollInterval) clearInterval(deadFileStatusPollInterval);
-            let inFlight = false;
-            const poll = async () => {
-                if (inFlight) return;
-                inFlight = true;
-                try {
-                    const response = await fetch('/api/admin/dead-files/job-status');
-                    const job = await response.json();
-                    if (!response.ok) throw new Error(job.message || 'Could not read Dead Files progress.');
-                    showSecondaryProgressPanel(job, 'dead-files-bulk', 'Open Dead Files', openDeadFilesModal);
-                    if (job.status === 'completed' || job.status === 'error') {
-                        clearInterval(deadFileStatusPollInterval);
-                        deadFileStatusPollInterval = null;
-                        loadCatalog();
-                        const result = job.result || {};
-                        const summary = job.task === 'dead-files-purge'
-                            ? `${job.message}${job.status === 'completed' ? ` Cleared ${Number(result.purged) || 0} catalog entr${Number(result.purged) === 1 ? 'y' : 'ies'}.` : ''}`
-                            : `${job.message}${Array.isArray(result.items) ? '\n' + result.items.filter(item => !item.success).slice(0, 5).map(item => `#${item.id}: ${item.message}`).join('\n') : ''}`;
-                        if (!suppressCompletionAlert) showAlert('Dead Files', summary, job.status === 'completed' && !(Number(result.failed) > 0));
-                    }
-                } catch (error) {
-                    document.getElementById('job-status-text').innerText = `${error.message || 'Connection interrupted while checking progress.'} Retrying…`;
-                } finally {
-                    inFlight = false;
-                }
-            };
-            deadFileStatusPollInterval = setInterval(poll, 800);
-            poll();
-        }
-
-        async function repairSelectedDeadFiles() {
-            const items = [...deadFileSelectedIds]
-                .filter(id => deadFileRepairChoices.has(id))
-                .map(id => ({ id: Number(id), replacement_path: deadFileRepairChoices.get(id) }));
-            if (!items.length) {
-                showAlert('Dead Files', 'Select one or more entries with a verified replacement first.', false);
-                return;
-            }
-            if (!(await showConfirm('Repair Selected Catalog Paths', `Repair ${items.length} selected catalog entr${items.length === 1 ? 'y' : 'ies'} to their verified replacement files? Existing library assignments will be preserved.`, 'Repair Selected'))) return;
-            return startDeadFileTask('/api/admin/dead-files/repair/bulk', { items }, `Starting catalog repair for ${items.length} selected entr${items.length === 1 ? 'y' : 'ies'}...`);
-        }
-
-        async function repairDeadFileFromButton(button) {
-            const deadId = Number(button.dataset.deadId);
-            const replacementPath = button.dataset.replacement;
-            if (!(await showConfirm('Repair Catalog Path', `Repair catalog entry #${deadId} to this file?\n\n${replacementPath}\n\nExisting library assignments will be preserved.`, 'Repair Path'))) return;
-            return startDeadFileTask('/api/admin/dead-files/repair/bulk', {
-                items: [{ id: deadId, replacement_path: replacementPath }]
-            }, `Starting repair for catalog entry #${deadId}...`);
-        }
-
-        async function clearDeadFile(id) {
-            if (!(await showConfirm('Clear Dead Catalog Entry', `Clear stale catalog entry #${id}? This removes only the catalog record and associated library links; it does not delete audio files.`, 'Clear Entry'))) return;
-            try {
-                const response = await fetch(`/api/admin/dead-files/${id}`, { method: 'DELETE' });
-                const result = await response.json();
-                if (!response.ok || !result.success) throw new Error(result.message || 'Could not clear this catalog entry.');
-                deadFileSelectedIds.delete(Number(id));
-                showAlert('Dead Files', 'Stale catalog entry cleared.', true);
-                loadCatalog();
-                openDeadFilesModal();
-            } catch (error) { showAlert('Dead Files', error.message || 'Could not contact the catalog repair endpoint.', false); }
-        }
-
-        function closeDeadFilesModal() { closeManagedModal('dead-files-modal'); }
-
-        async function purgeDeadFiles() {
-            if (!(await showConfirm('Clear Dead Catalog Entries', 'Check the catalog for stale entries pointing to missing files, then remove those catalog records? This does not delete audio files.', 'Purge Dead Entries'))) return;
-            return startDeadFileTask('/api/admin/dead-files/purge', {}, 'Starting Dead Files catalog check...');
         }
 
         let queueRefreshInFlight = false;
@@ -3912,6 +3027,8 @@
             chevron.classList.toggle('rotate-180');
         }
 
+        function normalizeDisplayedPath(value) { return String(value == null ? '' : value).replace(/\\/g, '/'); }
+
         function escapeHtml(str) {
             if (!str) return '';
             return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
@@ -3978,6 +3095,10 @@
         });
     </script>
 <% } %>
+
+<script src="/js/catalog.js"></script>
+<script src="/js/organizer-review.js"></script>
+<script src="/js/pool-maintenance.js"></script>
 
 <script>
 (() => {

@@ -48,16 +48,22 @@ function normalized(value) {
         .replace(/[^\p{L}\p{N}]+/gu, ' ').trim().toLowerCase();
 }
 
+function normalizeFilesystemPath(...values) {
+    const parts = values.map(value => String(value == null ? '' : value).trim().replace(/\\/g, '/'));
+    if (!parts.length || !parts[0]) return '';
+    return path.resolve(...parts).replace(/\\/g, '/');
+}
+
 function pathIsInside(candidatePath, rootPath) {
     if (!candidatePath || !rootPath) return false;
-    const candidate = path.resolve(candidatePath);
-    const root = path.resolve(rootPath);
+    const candidate = normalizeFilesystemPath(candidatePath);
+    const root = normalizeFilesystemPath(rootPath);
     const relative = path.relative(root, candidate);
     return relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
 function pathIsSameOrInside(candidatePath, rootPath) {
-    return !!candidatePath && !!rootPath && (path.resolve(candidatePath) === path.resolve(rootPath) || pathIsInside(candidatePath, rootPath));
+    return !!candidatePath && !!rootPath && (normalizeFilesystemPath(candidatePath) === normalizeFilesystemPath(rootPath) || pathIsInside(candidatePath, rootPath));
 }
 
 function splitScriptArguments(input) {
@@ -247,8 +253,8 @@ function pathSuggestedTags(filePath, dumpRoot) {
 
 class Organizer {
     constructor(options) {
-        this.dbPath = options.dbPath;
-        this.poolDir = path.resolve(options.poolDir);
+        this.dbPath = normalizeFilesystemPath(options.dbPath);
+        this.poolDir = normalizeFilesystemPath(options.poolDir);
         this.getScanSettings = options.getScanSettings;
         this.onCatalogPathChanged = options.onCatalogPathChanged || (() => {});
         this.onPoolFileAdded = options.onPoolFileAdded || (() => {});
@@ -308,6 +314,7 @@ class Organizer {
         if (!reviewColumns.some(column => column.name === 'assigned_user_id')) {
             this.db.exec('ALTER TABLE review_queue ADD COLUMN assigned_user_id INTEGER');
         }
+        this.normalizeStoredFilesystemPaths();
         const savedNamingScript = this.db.prepare("SELECT value FROM settings WHERE key = 'naming_script'").get();
 
         if (savedNamingScript && isLegacyDefaultNamingScript(savedNamingScript.value)) {
@@ -315,6 +322,46 @@ class Organizer {
         }
         this.running = false;
         this.poolTitleIndex = null;
+    }
+
+    normalizeStoredFilesystemPaths() {
+        const normalizeValue = value => value == null || value === '' ? value : normalizeFilesystemPath(value);
+        const records = this.db.prepare('SELECT file_path, sha256, size, mtime_ms, source_type, metadata_json, last_seen FROM file_records').all();
+        const updateRecord = this.db.prepare('UPDATE file_records SET file_path = ? WHERE file_path = ?');
+        const deleteRecord = this.db.prepare('DELETE FROM file_records WHERE file_path = ?');
+        for (const row of records) {
+            const canonical = normalizeValue(row.file_path);
+            if (!canonical || canonical === row.file_path) continue;
+            const existing = this.db.prepare('SELECT file_path FROM file_records WHERE file_path = ?').get(canonical);
+            if (existing && existing.file_path !== row.file_path) deleteRecord.run(row.file_path);
+            else {
+                try { updateRecord.run(canonical, row.file_path); }
+                catch (_) { deleteRecord.run(row.file_path); }
+            }
+        }
+
+        const reviews = this.db.prepare('SELECT id, source_path, candidate_path, matched_path, planned_path FROM review_queue').all();
+        const updateReview = this.db.prepare('UPDATE review_queue SET source_path = ?, candidate_path = ?, matched_path = ?, planned_path = ? WHERE id = ?');
+        for (const row of reviews) {
+            const next = [row.source_path, row.candidate_path, row.matched_path, row.planned_path].map(normalizeValue);
+            if (next.some((value, i) => value !== [row.source_path, row.candidate_path, row.matched_path, row.planned_path][i])) {
+                updateReview.run(next[0], next[1], next[2], next[3], row.id);
+            }
+        }
+
+        const ignored = this.db.prepare('SELECT path FROM ignored_paths').all();
+        const updateIgnored = this.db.prepare('UPDATE ignored_paths SET path = ? WHERE path = ?');
+        const deleteIgnored = this.db.prepare('DELETE FROM ignored_paths WHERE path = ?');
+        for (const row of ignored) {
+            const canonical = normalizeFilesystemPath(row.path);
+            if (!canonical || canonical === row.path) continue;
+            const existing = this.db.prepare('SELECT path FROM ignored_paths WHERE path = ?').get(canonical);
+            if (existing && existing.path !== row.path) deleteIgnored.run(row.path);
+            else {
+                try { updateIgnored.run(canonical, row.path); }
+                catch (_) { deleteIgnored.run(row.path); }
+            }
+        }
     }
 
     getSettings() {
@@ -356,10 +403,12 @@ class Organizer {
     }
 
     resolveConfiguredPath(input) {
-        return path.resolve(path.isAbsolute(String(input)) ? String(input) : path.join(this.poolDir, String(input)));
+        const raw = String(input == null ? '' : input).trim().replace(/\\/g, '/');
+        return normalizeFilesystemPath(path.isAbsolute(raw) ? raw : path.join(this.poolDir, raw));
     }
 
     async hashFile(filePath) {
+        filePath = normalizeFilesystemPath(filePath);
         return new Promise((resolve, reject) => {
             const hash = crypto.createHash('sha256');
             const stream = fs.createReadStream(filePath);
@@ -370,14 +419,19 @@ class Organizer {
     }
 
     async readTags(filePath) {
+        filePath = normalizeFilesystemPath(filePath);
         const extension = path.extname(filePath).slice(1).toLowerCase();
         const tags = {
             title: '', artist: '', albumartist: '', album: '', date: '', originaldate: '',
             tracknumber: '', discnumber: '', totaldiscs: '', genre: '', duration: '',
-            _extension: extension, _bitrate: '', _codec: '', _lossless: false, _bits_per_sample: '', _bit_depth: '', _multiartist: '', _organizer_metadata_version: 6
+            _extension: extension, _bitrate: '', _codec: '', _lossless: false, _bits_per_sample: '', _bit_depth: '', _multiartist: '', _organizer_metadata_version: 7
         };
         try {
-            const parsed = await mm.parseFile(filePath, { skipCovers: true });
+            const parsed = await mm.parseFile(filePath, {
+                skipCovers: true,
+
+                ...(['opus', 'ogg'].includes(extension) ? { duration: true } : {})
+            });
             const common = parsed.common || {};
             tags.title = String(common.title || '').trim();
             tags.artist = String(common.artist || '').trim();
@@ -390,9 +444,11 @@ class Organizer {
             tags.totaldiscs = common.disk && common.disk.of != null ? String(common.disk.of) : '';
             tags.genre = Array.isArray(common.genre) ? String(common.genre[0] || '') : String(common.genre || '');
             tags.duration = parsed.format && Number.isFinite(parsed.format.duration) ? Number(parsed.format.duration) : '';
-            if (parsed.format && Number.isFinite(parsed.format.bitrate)) {
-                tags._bitrate = String(Math.round(parsed.format.bitrate / 1000));
+            let bitrate = Number(parsed.format && parsed.format.bitrate) || 0;
+            if (!bitrate && Number(tags.duration) > 0) {
+                try { bitrate = (fs.statSync(filePath).size * 8) / Number(tags.duration); } catch (_) {}
             }
+            if (bitrate > 0 && Number.isFinite(bitrate)) tags._bitrate = String(Math.round(bitrate / 1000));
             tags._codec = String(parsed.format && parsed.format.codec || '').trim();
             if (/\balac\b|apple\s+lossless/i.test(tags._codec)) tags._codec = 'ALAC';
             const bitsPerSample = Number(parsed.format && parsed.format.bitsPerSample) || 0;
@@ -405,14 +461,23 @@ class Organizer {
             tags._multiartist = artists.length > 1 ? '1' : '';
         } catch (_) {}
 
-        tags._organizer_metadata_version = 6;
+        tags._organizer_metadata_version = 7;
         return tags;
     }
 
     async statAndHash(filePath, knownHash = '', forceHash = false) {
+        filePath = normalizeFilesystemPath(filePath);
         const stat = await fs.promises.stat(filePath);
-        const resolved = path.resolve(filePath);
-        const previous = this.db.prepare('SELECT sha256, size, mtime_ms FROM file_records WHERE file_path = ?').get(resolved);
+        const resolved = filePath;
+        let previous = this.db.prepare('SELECT file_path, sha256, size, mtime_ms FROM file_records WHERE file_path = ?').get(resolved);
+        if (!previous) {
+            previous = this.db.prepare("SELECT file_path, sha256, size, mtime_ms FROM file_records WHERE source_type = 'pool'").all()
+                .find(row => normalizeFilesystemPath(row.file_path) === resolved) || null;
+            if (previous) {
+                this.db.prepare('UPDATE file_records SET file_path = ? WHERE file_path = ?').run(resolved, previous.file_path);
+                previous = { ...previous, file_path: resolved };
+            }
+        }
         let sha256 = knownHash;
         if (!sha256 && !forceHash && previous && previous.size === stat.size && Math.abs(previous.mtime_ms - stat.mtimeMs) < 1) {
             sha256 = previous.sha256;
@@ -422,10 +487,12 @@ class Organizer {
     }
 
     findPotentialMovedRecord(sha256, currentPath) {
-        const rows = this.db.prepare("SELECT * FROM file_records WHERE sha256 = ? AND source_type = 'pool' AND file_path <> ?")
-            .all(sha256, path.resolve(currentPath));
+        currentPath = normalizeFilesystemPath(currentPath);
+        const rows = this.db.prepare("SELECT * FROM file_records WHERE sha256 = ? AND source_type = 'pool'")
+            .all(sha256).filter(row => normalizeFilesystemPath(row.file_path) !== currentPath);
 
-        return rows.length === 1 && !fs.existsSync(rows[0].file_path) ? rows[0] : null;
+        const missing = rows.filter(row => !fs.existsSync(normalizeFilesystemPath(row.file_path)));
+        return missing.length === 1 ? { ...missing[0], file_path: normalizeFilesystemPath(missing[0].file_path) } : null;
     }
 
     async indexPoolFile(filePath, lightweightTags = {}, knownHash = '', forceRefresh = false) {
@@ -434,7 +501,7 @@ class Organizer {
         const oldTags = old ? this.safeJson(old.metadata_json, {}) : {};
         const unchanged = !forceRefresh && old && old.size === stat.size && Math.abs(old.mtime_ms - stat.mtimeMs) < 1;
 
-        const suppliedTags = unchanged && Number(oldTags._organizer_metadata_version) === 6
+        const suppliedTags = unchanged && Number(oldTags._organizer_metadata_version) === 7
             ? oldTags
             : await this.readTags(resolved);
         const metadata = {
@@ -449,7 +516,7 @@ class Organizer {
             discnumber: String(suppliedTags.discnumber || ''),
             totaldiscs: String(suppliedTags.totaldiscs || ''),
             _extension: String(suppliedTags._extension || path.extname(resolved).slice(1).toLowerCase()),
-            _organizer_metadata_version: 6
+            _organizer_metadata_version: 7
         };
 
         if (old && old.sha256 && old.sha256 !== sha256) {
@@ -493,7 +560,7 @@ class Organizer {
                 album: metadata.album || hints.album
             };
             const cached = { file_path: resolved, sha256, size: stat.size, mtime_ms: stat.mtimeMs, source_type: 'pool', metadata_json: JSON.stringify(metadata), tags: cacheTags };
-            const cacheIndex = this.poolCache.findIndex(item => path.resolve(item.file_path) === resolved);
+            const cacheIndex = this.poolCache.findIndex(item => normalizeFilesystemPath(item.file_path) === resolved);
             const previous = cacheIndex >= 0 ? this.poolCache[cacheIndex] : null;
             if (cacheIndex >= 0) this.poolCache[cacheIndex] = cached;
             else this.poolCache.push(cached);
@@ -503,10 +570,12 @@ class Organizer {
     }
 
     updateFileRecordPath(fromPath, toPath, sourceType, sha256, size, mtimeMs, tags) {
-        const from = path.resolve(fromPath);
-        const to = path.resolve(toPath);
-        const old = this.db.prepare('SELECT * FROM file_records WHERE file_path = ?').get(from);
-        if (old) this.db.prepare('DELETE FROM file_records WHERE file_path = ?').run(from);
+        const from = normalizeFilesystemPath(fromPath);
+        const to = normalizeFilesystemPath(toPath);
+        let old = this.db.prepare('SELECT * FROM file_records WHERE file_path = ?').get(from);
+        if (!old) old = this.db.prepare("SELECT * FROM file_records WHERE source_type IN ('pool', 'trash')").all()
+            .find(row => normalizeFilesystemPath(row.file_path) === from) || null;
+        if (old) this.db.prepare('DELETE FROM file_records WHERE file_path = ?').run(old.file_path);
         this.db.prepare(`
             INSERT OR REPLACE INTO file_records (file_path, sha256, size, mtime_ms, source_type, metadata_json, last_seen)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -517,6 +586,7 @@ class Organizer {
 
     queryPoolRecords() {
         return this.db.prepare("SELECT * FROM file_records WHERE source_type = 'pool'").all()
+            .map(row => ({ ...row, file_path: normalizeFilesystemPath(row.file_path) }))
             .filter(row => fs.existsSync(row.file_path))
             .map(row => {
                 const stored = this.safeJson(row.metadata_json, {});
@@ -535,7 +605,7 @@ class Organizer {
         if (commonAlbumFolder) {
             artist = commonAlbumFolder[1].trim();
             album = commonAlbumFolder[2].trim();
-        } else if (path.resolve(path.dirname(filePath)) !== this.poolDir && parent && parent !== path.basename(this.poolDir)) {
+        } else if (normalizeFilesystemPath(path.dirname(filePath)) !== this.poolDir && parent && parent !== path.basename(this.poolDir)) {
             artist = parent;
             album = folder;
         }
@@ -552,8 +622,10 @@ class Organizer {
     }
 
     exactPoolMatch(sha256, currentPath) {
+        const current = normalizeFilesystemPath(currentPath);
         const rows = this.db.prepare("SELECT * FROM file_records WHERE sha256 = ? AND source_type = 'pool'").all(sha256);
-        return rows.find(row => path.resolve(row.file_path) !== path.resolve(currentPath) && fs.existsSync(row.file_path)) || null;
+        const match = rows.find(row => normalizeFilesystemPath(row.file_path) !== current && fs.existsSync(normalizeFilesystemPath(row.file_path)));
+        return match ? { ...match, file_path: normalizeFilesystemPath(match.file_path) } : null;
     }
 
     scoreMetadata(candidate, target, candidateEmbedded = null) {
@@ -617,7 +689,9 @@ class Organizer {
     }
 
     qualityProfile(filePath, tags = {}) {
-        const extension = String(tags._extension || path.extname(filePath || '').slice(1)).toLowerCase();
+
+        const pathExtension = path.extname(filePath || '').slice(1).toLowerCase();
+        const extension = pathExtension || String(tags._extension || '').toLowerCase();
         const codec = String(tags._codec || '').toLowerCase();
         const bitrate = Number.parseInt(tags._bitrate, 10) || 0;
         const bitsPerSample = Number.parseInt(tags._bits_per_sample || tags._bit_depth, 10) || 0;
@@ -625,18 +699,25 @@ class Organizer {
         const isFlac = extension === 'flac' || codec.includes('flac');
         const isAlac = extension === 'alac' || codec.includes('alac');
         const isPcm = ['wav', 'aif', 'aiff'].includes(extension) || codec.includes('pcm');
+        const isLossyCodec = extension === 'mp3' || codec.includes('mpeg layer 3')
+            || extension === 'opus' || codec.includes('opus')
+            || extension === 'ogg' || codec.includes('vorbis')
+            || extension === 'aac' || codec.includes('aac') || extension === 'm4a';
+
+        const losslessFlag = tags._lossless === true || tags._lossless === 1
+            || String(tags._lossless || '').trim().toLowerCase() === 'true';
+        const isOtherLossless = losslessFlag && !isLossyCodec;
 
         let tier = 1;
         if (isFlac) tier = 60;
         else if (isAlac) tier = 50;
         else if (isPcm) tier = 45;
-        else if (tags._lossless) tier = 40;
-        else if (extension === 'aac' || codec.includes('aac')) tier = 30;
-        else if (extension === 'mp3' || codec.includes('mpeg layer 3')) tier = 20;
-        else if (extension === 'opus' || codec.includes('opus')) tier = 25;
-        else if (extension === 'ogg' || codec.includes('vorbis')) tier = 22;
-        else if (extension === 'm4a') tier = 28;
-        return { tier, bitrate, bitsPerSample, sampleRate, extension, codec, lossless: isFlac || isAlac || isPcm || !!tags._lossless };
+        else if (isOtherLossless) tier = 40;
+        else if (isLossyCodec) tier = 20;
+        return {
+            tier, bitrate, bitsPerSample, sampleRate, extension, codec,
+            lossless: isFlac || isAlac || isPcm || isOtherLossless
+        };
     }
 
     isBetterQualityVersion(candidatePath, candidateTags, targetPath, targetTags) {
@@ -647,17 +728,30 @@ class Organizer {
             && candidate.bitsPerSample !== target.bitsPerSample) {
             return candidate.bitsPerSample > target.bitsPerSample;
         }
-        const lossyFamilies = new Set([20, 22, 25, 28, 30]);
-        if (lossyFamilies.has(candidate.tier) && candidate.bitrate && target.bitrate) {
+        const lossyCodecFamily = profile => {
+            if (profile.extension === 'mp3' || profile.codec.includes('mpeg layer 3')) return 'mp3';
+            if (profile.extension === 'opus' || profile.codec.includes('opus')) return 'opus';
+            if (profile.codec.includes('vorbis')) return 'vorbis';
+            if (profile.extension === 'ogg') return `ogg:${profile.codec || 'unknown'}`;
+            if (profile.extension === 'aac' || profile.codec.includes('aac')) return 'aac';
+            if (profile.extension === 'm4a') return `m4a:${profile.codec || 'unknown'}`;
+            return `${profile.extension}:${profile.codec || 'unknown'}`;
+        };
+
+        if (candidate.tier === 20 && target.tier === 20
+            && lossyCodecFamily(candidate) === lossyCodecFamily(target)
+            && candidate.bitrate && target.bitrate) {
             return candidate.bitrate >= target.bitrate + 24;
         }
         return false;
     }
 
     async removeDeadFileRecord(filePath) {
-        const resolved = path.resolve(filePath);
+        const resolved = normalizeFilesystemPath(filePath);
         if (!fs.existsSync(resolved)) {
-            this.db.prepare('DELETE FROM file_records WHERE file_path = ?').run(resolved);
+            const rows = this.db.prepare('SELECT file_path FROM file_records').all();
+            const storedPath = rows.find(row => normalizeFilesystemPath(row.file_path) === resolved)?.file_path || resolved;
+            this.db.prepare('DELETE FROM file_records WHERE file_path = ?').run(storedPath);
         }
     }
 
@@ -670,13 +764,15 @@ class Organizer {
         };
         if (!normalized(deadTags.title) || !normalized(deadTags.artist) || normalized(deadTags.artist) === 'unknown') return null;
 
-        const pathSet = new Set(candidatePaths.filter(Boolean).map(file => path.resolve(file)));
+        const pathSet = new Set(candidatePaths.filter(Boolean).map(file => normalizeFilesystemPath(file)));
         for (const row of this.db.prepare("SELECT file_path FROM file_records WHERE source_type = 'pool'").all()) {
-            if (fs.existsSync(row.file_path)) pathSet.add(path.resolve(row.file_path));
+            const normalizedPath = normalizeFilesystemPath(row.file_path);
+            if (fs.existsSync(normalizedPath)) pathSet.add(normalizedPath);
         }
+        const deadPath = normalizeFilesystemPath(track.file_path || '');
         const matches = [];
         for (const candidatePath of pathSet) {
-            if (!fs.existsSync(candidatePath) || path.resolve(candidatePath) === path.resolve(track.file_path || '')) continue;
+            if (!fs.existsSync(candidatePath) || normalizeFilesystemPath(candidatePath) === deadPath) continue;
             let candidateTags = {};
             try { candidateTags = await this.getEmbeddedMetadataForPath(candidatePath); } catch (_) {}
             const title = normalized(candidateTags.title);
@@ -713,7 +809,7 @@ class Organizer {
             const oldKey = normalized(previous.tags && previous.tags.title);
             const oldRows = oldKey ? this.poolTitleIndex.get(oldKey) : null;
             if (oldRows) {
-                const filtered = oldRows.filter(row => path.resolve(row.file_path) !== path.resolve(previous.file_path));
+                const filtered = oldRows.filter(row => normalizeFilesystemPath(row.file_path) !== normalizeFilesystemPath(previous.file_path));
                 if (filtered.length) this.poolTitleIndex.set(oldKey, filtered);
                 else this.poolTitleIndex.delete(oldKey);
             }
@@ -737,7 +833,7 @@ class Organizer {
             rows = this.poolTitleIndex.get(candidateTitle) || [];
         }
         for (const row of rows) {
-            if (path.resolve(row.file_path) === path.resolve(filePath)) continue;
+            if (normalizeFilesystemPath(row.file_path) === normalizeFilesystemPath(filePath)) continue;
 
             const targetTags = this.safeJson(row.metadata_json, {});
             if (!targetTags.title) continue;
@@ -760,18 +856,18 @@ class Organizer {
             const candidatePath = fs.existsSync(row.candidate_path) ? row.candidate_path
                 : (fs.existsSync(row.source_path) ? row.source_path : '');
             let embedded = this.safeJson(row.metadata_json, {});
-            if (candidatePath && Number(embedded._organizer_metadata_version) !== 6) {
+            if (candidatePath && Number(embedded._organizer_metadata_version) !== 7) {
                 try {
                     embedded = await this.readTags(candidatePath);
                     this.db.prepare('UPDATE review_queue SET metadata_json = ? WHERE id = ? AND status = \'pending\'')
                         .run(JSON.stringify(embedded), row.id);
                 } catch (_) {}
             }
-            let target = metadataCache.get(path.resolve(row.matched_path));
+            let target = metadataCache.get(normalizeFilesystemPath(row.matched_path));
             if (!target) {
                 try { target = await this.getEmbeddedMetadataForPath(row.matched_path); }
                 catch (_) { target = {}; }
-                metadataCache.set(path.resolve(row.matched_path), target || {});
+                metadataCache.set(normalizeFilesystemPath(row.matched_path), target || {});
             }
             const score = fs.existsSync(row.matched_path) ? this.scoreMetadata(embedded, target, embedded) : 0;
             if (score < 0.82) {
@@ -799,14 +895,14 @@ class Organizer {
     async walkAudioFiles(rootPath, excludedPaths = []) {
         const results = [];
         const config = this.getScanConfig();
-        const excludedRoots = [...excludedPaths, ...(config.trashFolder ? [config.trashFolder] : [])].map(item => path.resolve(item));
-        const resolvedRoot = path.resolve(rootPath);
+        const excludedRoots = [...excludedPaths, ...(config.trashFolder ? [config.trashFolder] : [])].map(item => normalizeFilesystemPath(item));
+        const resolvedRoot = normalizeFilesystemPath(rootPath);
         async function walk(current) {
             let entries;
             try { entries = await fs.promises.readdir(current, { withFileTypes: true }); }
             catch (_) { return; }
             for (const entry of entries) {
-                const target = path.join(current, entry.name);
+                const target = normalizeFilesystemPath(current, entry.name);
                 if (entry.isSymbolicLink()) continue;
                 if (entry.isDirectory()) {
                     if (excludedRoots.some(excluded => pathIsSameOrInside(target, excluded))) continue;
@@ -821,13 +917,13 @@ class Organizer {
     }
 
     alreadyPending(filePath) {
-        const resolved = path.resolve(filePath);
+        const resolved = normalizeFilesystemPath(filePath);
         return !!this.db.prepare(`SELECT 1 FROM review_queue WHERE status = 'pending' AND
             (source_path = ? OR candidate_path = ?) LIMIT 1`).get(resolved, resolved);
     }
 
     isIgnoredUnchanged(filePath, stat) {
-        const resolved = path.resolve(filePath);
+        const resolved = normalizeFilesystemPath(filePath);
         const row = this.db.prepare('SELECT * FROM ignored_paths WHERE path = ?').get(resolved);
         if (!row) return false;
         if (row.size === stat.size && Math.abs(row.mtime_ms - stat.mtimeMs) < 1) return true;
@@ -836,8 +932,8 @@ class Organizer {
     }
 
     queueReview(item) {
-        const sourcePath = path.resolve(item.source_path);
-        const candidatePath = path.resolve(item.candidate_path || item.source_path);
+        const sourcePath = normalizeFilesystemPath(item.source_path);
+        const candidatePath = normalizeFilesystemPath(item.candidate_path || item.source_path);
         const assignedUserId = Number.parseInt(item.assigned_user_id, 10);
         const validAssignedUserId = Number.isSafeInteger(assignedUserId) && assignedUserId > 0 ? assignedUserId : null;
         const assignmentWasProvided = Object.prototype.hasOwnProperty.call(item, 'assigned_user_id');
@@ -854,8 +950,8 @@ class Organizer {
                 source_path, candidate_path, matched_path, planned_path, kind, confidence, reason,
                 metadata_json, tags_json, sha256, file_size, file_mtime_ms, assigned_user_id, status, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-        `).run(sourcePath, candidatePath, item.matched_path ? path.resolve(item.matched_path) : null,
-            item.planned_path ? path.resolve(item.planned_path) : null, item.kind, item.confidence || 0,
+        `).run(sourcePath, candidatePath, item.matched_path ? normalizeFilesystemPath(item.matched_path) : null,
+            item.planned_path ? normalizeFilesystemPath(item.planned_path) : null, item.kind, item.confidence || 0,
             item.reason || 'Needs administrator review.', JSON.stringify(item.embedded || {}), JSON.stringify(item.tags || {}),
             item.sha256 || '', item.file_size || 0, item.file_mtime_ms || 0, validAssignedUserId, Date.now());
         return Number(result.lastInsertRowid);
@@ -864,25 +960,25 @@ class Organizer {
     resolvedTrashFolder() {
         const { trashFolder } = this.getScanConfig();
         if (!trashFolder) return '';
-        const resolved = path.resolve(trashFolder);
+        const resolved = normalizeFilesystemPath(trashFolder);
         if (resolved === this.poolDir || pathIsInside(this.poolDir, resolved)) return '';
         return resolved;
     }
 
     uniquePath(directory, filename) {
         const parsed = path.parse(filename);
-        let candidate = path.join(directory, filename);
+        let candidate = normalizeFilesystemPath(directory, filename);
         let n = 2;
         while (fs.existsSync(candidate)) {
-            candidate = path.join(directory, `${parsed.name} (${n})${parsed.ext}`);
+            candidate = normalizeFilesystemPath(directory, `${parsed.name} (${n})${parsed.ext}`);
             n++;
         }
         return candidate;
     }
 
     async moveFile(fromPath, toPath) {
-        const from = path.resolve(fromPath);
-        const to = path.resolve(toPath);
+        const from = normalizeFilesystemPath(fromPath);
+        const to = normalizeFilesystemPath(toPath);
         if (!fs.existsSync(from)) throw new Error(`File not found: ${from}`);
         if (fs.existsSync(to)) throw new Error(`Destination already exists: ${to}`);
         await fs.promises.mkdir(path.dirname(to), { recursive: true });
@@ -901,7 +997,7 @@ class Organizer {
     }
 
     async moveToTrash(filePath, sha256, tags) {
-        const current = path.resolve(filePath);
+        const current = normalizeFilesystemPath(filePath);
         const trashRoot = this.resolvedTrashFolder();
         if (!trashRoot) return current;
         if (pathIsSameOrInside(current, trashRoot)) return current;
@@ -913,6 +1009,7 @@ class Organizer {
     }
 
     buildDestination(tags, sourcePath, renameFiles) {
+        sourcePath = normalizeFilesystemPath(sourcePath);
         const settings = this.getSettings();
 
         const actualExtension = path.extname(sourcePath).slice(1).toLowerCase();
@@ -941,7 +1038,7 @@ class Organizer {
             filename = originalName;
         }
         if (!filename || filename === extension) throw new Error('Naming script did not produce a valid filename.');
-        const destination = path.resolve(this.poolDir, ...directories, filename);
+        const destination = normalizeFilesystemPath(this.poolDir, ...directories, filename);
         if (!pathIsInside(destination, this.poolDir)) throw new Error('The naming script attempted to place a file outside the Master Pool.');
         const { dumpFolders, trashFolder } = this.getScanConfig();
         if (dumpFolders.some(folder => pathIsSameOrInside(destination, folder))) throw new Error('Naming script points into a configured dump folder.');
@@ -950,7 +1047,7 @@ class Organizer {
     }
 
     async processOne(filePath, dumpRoot, stats, assignedUserId = null) {
-        const resolved = path.resolve(filePath);
+        const resolved = normalizeFilesystemPath(filePath);
         const parsedAssignedUserId = Number.parseInt(assignedUserId, 10);
         assignedUserId = Number.isSafeInteger(parsedAssignedUserId) && parsedAssignedUserId > 0
             ? parsedAssignedUserId : null;
@@ -964,7 +1061,7 @@ class Organizer {
                     tagsForPool = await this.getEmbeddedMetadataForPath(poolPath);
                 }
 
-                this.onPoolFileAdded(path.resolve(poolPath), tagsForPool || {}, { assignedUserId });
+                this.onPoolFileAdded(normalizeFilesystemPath(poolPath), tagsForPool || {}, { assignedUserId });
             } catch (error) {
                 console.warn(`[Organizer] Could not assign matched dump song to user ${assignedUserId}: ${error.message}`);
             }
@@ -1015,8 +1112,8 @@ class Organizer {
             }
         })();
 
-        if (plannedPath && path.resolve(plannedPath) !== resolved && fs.existsSync(plannedPath)) {
-            let targetRecord = this.poolRecords().find(row => path.resolve(row.file_path) === path.resolve(plannedPath));
+        if (plannedPath && normalizeFilesystemPath(plannedPath) !== resolved && fs.existsSync(plannedPath)) {
+            let targetRecord = this.poolRecords().find(row => normalizeFilesystemPath(row.file_path) === normalizeFilesystemPath(plannedPath));
             let targetHash = targetRecord && targetRecord.sha256;
             if (!targetHash) {
                 try { targetHash = await this.hashFile(plannedPath); } catch (_) { targetHash = ''; }
@@ -1197,7 +1294,7 @@ class Organizer {
             const seenRoots = new Set();
             const trashRoot = this.resolvedTrashFolder();
             for (const dumpRoot of initialConfig.dumpFolders) {
-                const root = path.resolve(dumpRoot);
+                const root = normalizeFilesystemPath(dumpRoot);
                 if (seenRoots.has(root)) continue;
 
                 if (root === this.poolDir || pathIsInside(this.poolDir, root) || (trashRoot && pathIsSameOrInside(root, trashRoot))) {
@@ -1208,7 +1305,7 @@ class Organizer {
                 if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) continue;
                 const files = await this.walkAudioFiles(root);
                 for (const file of files) {
-                    const resolved = path.resolve(file);
+                    const resolved = normalizeFilesystemPath(file);
                     if (!seenDumpFiles.has(resolved)) {
                         seenDumpFiles.add(resolved);
                         dumpFiles.push(resolved);
@@ -1234,7 +1331,7 @@ class Organizer {
 
                 const matchingDumpEntries = configuredDumpEntries
                     .filter(entry => pathIsSameOrInside(filePath, entry.path))
-                    .sort((a, b) => path.resolve(b.path).length - path.resolve(a.path).length);
+                    .sort((a, b) => normalizeFilesystemPath(b.path).length - normalizeFilesystemPath(a.path).length);
                 const matchedDumpEntry = matchingDumpEntries[0] || null;
                 const dumpRoot = matchedDumpEntry ? matchedDumpEntry.path : path.dirname(filePath);
                 const assignedUserId = matchedDumpEntry ? matchedDumpEntry.user_id : null;
@@ -1261,17 +1358,24 @@ class Organizer {
     }
 
     async getEmbeddedMetadataForPath(filePath) {
-        const resolved = path.resolve(filePath);
-        const record = this.db.prepare('SELECT metadata_json, sha256, source_type FROM file_records WHERE file_path = ?').get(resolved);
+        const resolved = normalizeFilesystemPath(filePath);
+        let record = this.db.prepare('SELECT file_path, metadata_json, sha256, source_type FROM file_records WHERE file_path = ?').get(resolved);
+        if (!record) {
+            record = this.db.prepare('SELECT file_path, metadata_json, sha256, source_type FROM file_records').all()
+                .find(row => normalizeFilesystemPath(row.file_path) === resolved) || null;
+        }
         let tags = this.safeJson(record && record.metadata_json, {});
-        if (fs.existsSync(resolved) && Number(tags._organizer_metadata_version) !== 6) {
+        if (fs.existsSync(resolved) && Number(tags._organizer_metadata_version) !== 7) {
             try {
                 tags = await this.readTags(resolved);
                 if (record && record.source_type === 'pool') {
-                    this.db.prepare('UPDATE file_records SET metadata_json = ?, last_seen = ? WHERE file_path = ?')
-                        .run(JSON.stringify(tags), Date.now(), resolved);
+                    this.db.prepare('UPDATE file_records SET file_path = ?, metadata_json = ?, last_seen = ? WHERE file_path = ?')
+                        .run(resolved, JSON.stringify(tags), Date.now(), record.file_path);
                 }
             } catch (_) {}
+        } else if (record && record.source_type === 'pool' && record.file_path !== resolved) {
+            try { this.db.prepare('UPDATE file_records SET file_path = ? WHERE file_path = ?').run(resolved, record.file_path); }
+            catch (_) {}
         }
         return tags;
     }
@@ -1280,11 +1384,11 @@ class Organizer {
         const rows = this.db.prepare("SELECT * FROM review_queue WHERE status = 'pending' AND kind IN ('metadata', 'low_match', 'similar', 'quality_upgrade')").all();
         const renameFiles = this.getSettings().rename_files === '1';
         for (const row of rows) {
-            const candidatePath = fs.existsSync(row.candidate_path) ? path.resolve(row.candidate_path)
-                : (fs.existsSync(row.source_path) ? path.resolve(row.source_path) : '');
+            const candidatePath = fs.existsSync(row.candidate_path) ? normalizeFilesystemPath(row.candidate_path)
+                : (fs.existsSync(row.source_path) ? normalizeFilesystemPath(row.source_path) : '');
             if (!candidatePath) continue;
             let embedded = this.safeJson(row.metadata_json, {});
-            if (Number(embedded._organizer_metadata_version) !== 6) {
+            if (Number(embedded._organizer_metadata_version) !== 7) {
                 try {
                     embedded = await this.readTags(candidatePath);
                     this.db.prepare("UPDATE review_queue SET metadata_json = ? WHERE id = ? AND status = 'pending'")
@@ -1319,7 +1423,7 @@ class Organizer {
             WHERE status = 'pending' AND planned_path IS NOT NULL`).all();
         const targetCounts = new Map();
         const pathKey = value => {
-            const resolved = path.resolve(value);
+            const resolved = normalizeFilesystemPath(value);
             return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
         };
         for (const row of allPendingTargets) {
@@ -1330,9 +1434,9 @@ class Organizer {
         let approved = 0;
         let skipped = 0;
         for (const row of rows) {
-            const candidatePath = fs.existsSync(row.candidate_path) ? path.resolve(row.candidate_path)
-                : (fs.existsSync(row.source_path) ? path.resolve(row.source_path) : '');
-            const destination = path.resolve(row.planned_path);
+            const candidatePath = fs.existsSync(row.candidate_path) ? normalizeFilesystemPath(row.candidate_path)
+                : (fs.existsSync(row.source_path) ? normalizeFilesystemPath(row.source_path) : '');
+            const destination = normalizeFilesystemPath(row.planned_path);
             const key = pathKey(destination);
             const safeDestination = pathIsInside(destination, this.poolDir)
                 && !config.dumpFolders.some(folder => pathIsSameOrInside(destination, folder))
@@ -1401,9 +1505,9 @@ class Organizer {
             const tags = this.safeJson(row.tags_json, {});
             let embedded = this.safeJson(row.metadata_json, {});
             const currentCandidatePath = fs.existsSync(row.candidate_path)
-                ? path.resolve(row.candidate_path)
-                : (fs.existsSync(row.source_path) ? path.resolve(row.source_path) : '');
-            if (currentCandidatePath && Number(embedded._organizer_metadata_version) !== 6) {
+                ? normalizeFilesystemPath(row.candidate_path)
+                : (fs.existsSync(row.source_path) ? normalizeFilesystemPath(row.source_path) : '');
+            if (currentCandidatePath && Number(embedded._organizer_metadata_version) !== 7) {
                 try {
                     embedded = await this.readTags(currentCandidatePath);
                     this.db.prepare("UPDATE review_queue SET metadata_json = ?, file_size = ?, file_mtime_ms = ? WHERE id = ? AND status = 'pending'")
@@ -1419,7 +1523,7 @@ class Organizer {
             let matchedExists = !!(matchedPath && fs.existsSync(matchedPath));
             let matchIsMeaningful = false;
             if (matchedExists) {
-                const resolvedMatch = path.resolve(matchedPath);
+                const resolvedMatch = normalizeFilesystemPath(matchedPath);
                 matchedMetadata = await this.getEmbeddedMetadataForPath(resolvedMatch);
                 const directScore = this.scoreMetadata(embedded, matchedMetadata, embedded);
                 matchIsMeaningful = directScore >= 0.82;
@@ -1523,9 +1627,9 @@ class Organizer {
         const row = this.reviewRow(id);
         const config = this.getScanConfig();
         const trashRoot = this.resolvedTrashFolder();
-        let candidatePath = path.resolve(row.candidate_path);
+        let candidatePath = normalizeFilesystemPath(row.candidate_path);
         if (!fs.existsSync(candidatePath)) {
-            if (fs.existsSync(row.source_path)) candidatePath = path.resolve(row.source_path);
+            if (fs.existsSync(row.source_path)) candidatePath = normalizeFilesystemPath(row.source_path);
             else throw new Error('The review candidate file no longer exists at its recorded path.');
         }
         const tags = this.safeJson(row.tags_json, {});
@@ -1588,26 +1692,26 @@ class Organizer {
                 if (path.extname(candidatePath).toLowerCase() !== path.extname(row.matched_path).toLowerCase()) {
                     throw new Error('The candidate and matched song use different file extensions. Use Upgrade Pool Version for a verified higher-quality encoding, or Keep Both.');
                 }
-                destination = path.resolve(row.matched_path);
+                destination = normalizeFilesystemPath(row.matched_path);
             } else {
                 if (metadataConfidence < 0.92 || !this.isBetterQualityVersion(candidatePath, candidateMetadata, row.matched_path, targetMetadata)) {
                     throw new Error('Upgrade blocked: the candidate must be a strong metadata match and demonstrably higher quality than the existing pool version.');
                 }
                 destination = row.planned_path && pathIsInside(row.planned_path, this.poolDir)
-                    ? path.resolve(row.planned_path)
+                    ? normalizeFilesystemPath(row.planned_path)
                     : this.buildDestination({ ...tags, ...candidateMetadata }, candidatePath, this.getSettings().rename_files === '1');
-                if (path.resolve(destination) === path.resolve(row.matched_path)) {
+                if (normalizeFilesystemPath(destination) === normalizeFilesystemPath(row.matched_path)) {
                     destination = this.uniquePath(path.dirname(destination), path.basename(destination));
                 }
                 if (fs.existsSync(destination)) {
                     throw new Error(`Upgrade destination is already occupied: ${destination}. Review that path conflict separately before upgrading.`);
                 }
             }
-            targetToReplace = path.resolve(row.matched_path);
+            targetToReplace = normalizeFilesystemPath(row.matched_path);
         } else {
             try {
                 destination = row.planned_path && pathIsInside(row.planned_path, this.poolDir) && !pathIsSameOrInside(row.planned_path, config.trashFolder || path.join(this.poolDir, '__no_trash__'))
-                    ? path.resolve(row.planned_path)
+                    ? normalizeFilesystemPath(row.planned_path)
                     : this.buildDestination(tags, candidatePath, this.getSettings().rename_files === '1');
             } catch (_) {
                 destination = this.buildDestination(tags, candidatePath, this.getSettings().rename_files === '1');

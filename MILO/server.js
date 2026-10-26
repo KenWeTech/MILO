@@ -3804,12 +3804,25 @@ function getQueueTasksForViewer(viewer) {
 }
 
 const POOL_STORAGE_CACHE_MS = 60 * 1000;
+const POOL_STORAGE_CACHE_KEY = 'pool_storage_analysis_cache_v1';
 let poolStorageAnalysis = {
     status: 'idle', startedAt: null, calculatedAt: null, progress: 0, total: 0,
     phase: '', message: 'Storage analysis has not run yet.', totalBytes: 0,
     totalTracks: 0, missingMetadata: 0, errors: 0, formats: [], topArtists: [],
     userLinks: [], totalAssignedLinks: 0, validLinks: 0, brokenLinks: 0
 };
+
+try {
+    const cachedStorageRow = db.prepare('SELECT value FROM scan_settings WHERE key = ?').get(POOL_STORAGE_CACHE_KEY);
+    const cachedStorage = cachedStorageRow?.value ? JSON.parse(cachedStorageRow.value) : null;
+    if (cachedStorage && cachedStorage.status === 'ready' && Number(cachedStorage.calculatedAt) > 0
+        && Array.isArray(cachedStorage.formats) && Array.isArray(cachedStorage.topArtists)
+        && Array.isArray(cachedStorage.userLinks)) {
+        poolStorageAnalysis = { ...poolStorageAnalysis, ...cachedStorage, status: 'ready' };
+    }
+} catch (cacheError) {
+    console.warn(`[MILO] Could not load persisted Pool Maintenance storage snapshot: ${cacheError.message}`);
+}
 let poolStorageAnalysisPromise = null;
 
 function poolAudioFormatLabel(filePath, tags = {}) {
@@ -3895,10 +3908,9 @@ async function buildPoolStorageAnalysis() {
         let errors = 0;
 
         poolStorageAnalysis = {
-            ...poolStorageAnalysis, status: 'building', startedAt, calculatedAt: null,
+            ...poolStorageAnalysis, status: 'building', startedAt,
             progress: 0, total: 0, phase: 'enumerate', message: 'Enumerating audio files in the actual Master Pool…',
-            totalBytes: 0, totalTracks: 0, missingMetadata: 0, errors: 0,
-            formats: [], topArtists: [], userLinks: [], totalAssignedLinks: 0, validLinks: 0, brokenLinks: 0
+            errorTrace: ''
         };
         const poolFiles = await walkDir(poolRoot, exemptPaths, progress => {
             poolStorageAnalysis.progress = Number(progress.discoveredAudioFiles) || 0;
@@ -4005,9 +4017,16 @@ async function buildPoolStorageAnalysis() {
             formats: formatRows, topArtists: artistRows, userLinks: usersRows,
             totalAssignedLinks: totals.assigned, validLinks: totals.valid, brokenLinks: totals.broken
         };
+        try {
+            db.prepare(`INSERT INTO scan_settings (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+                .run(POOL_STORAGE_CACHE_KEY, JSON.stringify(poolStorageAnalysis));
+        } catch (cacheError) {
+            console.warn(`[MILO] Could not persist Pool Maintenance storage snapshot: ${cacheError.message}`);
+        }
     } catch (error) {
         poolStorageAnalysis = {
-            ...poolStorageAnalysis, status: 'error', calculatedAt: Date.now(),
+            ...poolStorageAnalysis, status: 'error', failedAt: Date.now(),
             message: error.message || 'Storage analysis failed.', errorTrace: error.stack || error.message
         };
     } finally {
@@ -4019,7 +4038,7 @@ function startPoolStorageAnalysis(force = false) {
     if (poolStorageAnalysisPromise) return;
     if (!force && poolStorageAnalysis.status === 'ready' && Date.now() - Number(poolStorageAnalysis.calculatedAt || 0) < POOL_STORAGE_CACHE_MS) return;
     poolStorageAnalysis = {
-        ...poolStorageAnalysis, status: 'building', startedAt: Date.now(), calculatedAt: null,
+        ...poolStorageAnalysis, status: 'building', startedAt: Date.now(),
         progress: 0, total: 0, phase: 'starting', message: 'Starting pool storage analysis…', errorTrace: ''
     };
     poolStorageAnalysisPromise = new Promise(resolve => setImmediate(resolve)).then(buildPoolStorageAnalysis);

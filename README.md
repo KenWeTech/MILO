@@ -63,12 +63,13 @@ One collection can therefore support multiple personal libraries without using a
 * **Music Organizer** — Process incoming files from configured dump/staging folders and place them into a tag-driven folder structure using a configurable MusicBrainz Picard-style naming script. This feature is optional and renenaming the audio files themselves is an option.
 * **Duplicate and metadata review** — Compare embedded metadata and file details, review duplicate files, path conflicts, possible matches, and quality upgrades, and choose how each uncertain case should be handled instead of blindly overwriting a file if you use Organizer.
 * **Quick Scan and Detailed Full Scan** — Check for new or changed music, run deeper catalog refreshes, process organizer staging folders, and reconcile recognized moved or upgraded files.
-* **Plain-text Personal Text Playlist** — Keep a saved artist/title list independent of provider websites and APIs, including entries that cannot yet be matched to a file in the catalog.
+* **Personal Text Playlist** — Keep a saved artist/title list independent of provider websites and APIs, including entries that cannot yet be matched to a file in the catalog.
 * **Text Playlist API** — Let external apps, automations, and shortcuts add tracks to a user's saved Text Playlist through a user-specific API key.
 * **Playlist provider imports** — Import playlists from Spotify, YouTube Music, and Apple Music when their accessible playlist data is available.
 * **Import preview and matching review** — Check tracks to add, tracks already in the library, and unmatched entries before applying a manual import.
-* **Unmatched Logs and Restore Tracks** — Revisit unmatched entries, review or correct possible matches, undo supported changes, and restore previous library selections.
+* **Unmatched Logs and Restore Tracks** — Review unmatched entries in Active Logs, revisit linked or skipped entries in History, undo supported actions, and restore previous library selections.
 * **Dead Files recovery** — Find catalog paths that no longer exist and repair entries when a verified replacement file is available.
+* **Wanted Tracks list** — Build a deduplicated list from unmatched requests across users, omit requests that now match the catalog, and save the list as text, POST it to an external endpoint, or do both.
 * **Scheduled maintenance and sync** — Configure Quick Scan, Detailed Full Scan, and user sync schedules while MILO coordinates maintenance and sync work.
 * **Progressive Web App** — Install MILO on supported mobile and desktop devices.
 * **Local network discovery** — Discover the server as `milo.local` on networks and container setups where mDNS traffic is supported.
@@ -209,7 +210,7 @@ curl -X POST "http://localhost:8088/api/integrations/text-playlist" \
   -d '{"artist":"Daft Punk","title":"One More Time"}'
 ```
 
-Replace `localhost` with the MILO server address when calling it from another device. Both `artist` and `title` are required. Duplicate entries are ignored. Keep the API key private; it can be revoked or replaced in Sync Settings. The full key is shown when generated and is not continuously displayed afterward.
+Replace `localhost` with the MILO server address when calling it from another device. Both `artist` and `title` are required. Duplicate entries are ignored. Keep the API key private; it can be revoked or replaced in Sync Settings. The full key is shown when generated and is not continuously displayed afterward. This is an inbound API for adding an individual track to a user's Personal Text Playlist; it is separate from the administrator-only Wanted Tracks output described below.
 
 #### Shazam iOS Shortcut
 
@@ -264,7 +265,7 @@ Manual import preview separates tracks to add, tracks already in the library, an
 
 ## Unmatched Logs and Restore Tracks
 
-**Unmatched Logs** keeps entries MILO could not confidently match. Users can review possible catalog matches, link an entry to a correct track where appropriate, or skip an entry to history for later review. Supported actions can be inspected and undone. A future successful sync can clear an unmatched entry once it is resolved.
+**Unmatched Logs** keeps entries MILO could not confidently match. There are **Active Logs** and **History** tabs, so current unresolved entries and prior actions are available in one place. Users can review possible catalog matches, link an entry to a correct track where appropriate, or skip an entry to history for later review. History records linked and skipped actions and supports undo where available. A later successful sync or reconciliation can clear an unmatched entry once it is resolved.
 
 **Restore Tracks** lets users recover previous library selections without having to search the entire catalog and manually rebuild the selection. Restoring a selection creates the library reference again; it does not restore or recreate a deleted source audio file.
 
@@ -282,7 +283,23 @@ MILO includes tools for maintaining the catalog as the master collection changes
 
 ### Dead Files
 
-**Dead Files** checks catalog entries whose recorded source paths can no longer be found. When a verified replacement is available, the administrator can repair the catalog to point to it. Clearing a dead entry removes the stale catalog record; it is not a command to delete unrelated source files.
+**Dead Files** checks catalog entries whose recorded source paths can no longer be found. When a verified replacement is available, the administrator can repair the catalog to point to it. Clearing a dead entry removes the stale catalog record; it is not a command to delete unrelated source files. Dead Files and Wanted Tracks share the administrator's **Pool Maintenance** modal and are accessed from separate tabs.
+
+### Wanted Tracks
+
+The **Wanted Tracks** tab builds a shared list from active unmatched-log requests across users. MILO normalizes and deduplicates equivalent requests, then omits entries that now match the master catalog. Each output line must identify both the artist and song title in `Artist - Song Title` format. Legacy entries that cannot be reliably separated into an artist and title are skipped rather than assigned a guessed artist; the result reports how many entries were skipped and recommends re-syncing the source playlist to refresh those records.
+
+Administrators can choose **Save text file only**, **POST JSON to URL only**, or **Save text file and POST JSON**. The `wanted-tracks.txt` file is stored beside the configured main database, so the standard Docker setup writes it under `/app/data` and preserves it through the `./data:/app/data` mount. The list can also be downloaded from the tab.
+
+When POST delivery is enabled, MILO sends JSON containing exactly one field, `songs`. The value is a single string with one `Artist - Song Title` entry per line—not an array and not a collection of metadata fields. For example:
+
+```json
+{
+  "songs": "Daft Punk - One More Time\nThe Weeknd - Blinding Lights\nGorillaz - Feel Good Inc."
+}
+```
+
+Enter an absolute HTTP or HTTPS receiver URL in the Wanted Tracks settings. The list is automatically regenerated after Quick Scan, Detailed Full Scan, playlist syncs, and relevant unmatched-log changes; administrators can also use **Generate & Send Now** to run it manually. Text-file output and POST delivery are independently selectable, so file generation can still be used without configuring a receiver.
 
 ### Organizer Review
 
@@ -310,7 +327,8 @@ The administrator interface includes tools to:
 * Set each user's library path and Standard or Advanced linking mode.
 * Configure Quick Scan and Detailed Full Scan schedules.
 * Run scans and monitor progress.
-* Review and repair Dead Files.
+* Use Pool Maintenance to switch between Dead Files and Wanted Tracks.
+* Configure Wanted Tracks to save `wanted-tracks.txt`, POST the `songs` JSON field to a receiver, or do both.
 * Configure organizer folders, naming behavior, and review settings.
 * Configure global Spotify and Apple Music credentials when desired.
 
@@ -356,7 +374,7 @@ MILO can run directly from source with Node.js/npm or be deployed using its Dock
 
 ### Run From Source
 
-1. Download and extract the laatest ⁠`MILO-vX.X.X.zip`⁠ archive from [GitHub Releases](https://github.com/KenWeTech/MILO/releases).
+1. Download and extract the latest ⁠`MILO-vX.X.X.zip`⁠ archive from [GitHub Releases](https://github.com/KenWeTech/MILO/releases).
 2. Install the project dependencies from the project directory:
 
    ```bash
@@ -461,7 +479,7 @@ For Docker, use the container paths from the Compose example. For a source insta
 
 ## SSL Configuration and PWA Support
 
-MILO can use its built-in HTTPS or run behind a reverse proxy, but choose only one. While the app installs over plain HTTP just fine, a fully trusted HTTPS connection is recommended for the best Progressive Web App (PWA) experience across your devices. Keep in mind that simply dismissing a browser security warning doesn't actually make the connection trusted. Lastly, the offline fallback is just a basic retry screen—you cannot browse the catalog, select songs, or manage your library while the server is unreachable.
+MILO can use its built-in HTTPS or run behind a reverse proxy, but choose only one. While the app installs over plain HTTP just fine, a fully trusted HTTPS connection is recommended for the best Progressive Web App (PWA) experience across your devices. Keep in mind that simply dismissing a browser security warning doesn't actually make the connection trusted. The live connection monitor uses the lightweight `/api/health` endpoint to check whether the MILO server is reachable. The offline fallback is a basic retry screen so you cannot browse the catalog, select songs, or manage your library while the server is unreachable.
 
 ### Reverse Proxy (Recommended for HTTPS)
 

@@ -19,10 +19,10 @@ const app = express();
 
 const PORT = process.env.PORT || 8088;
 const SECRET_KEY = process.env.FLASK_SECRET_KEY || 'super-secret-production-key';
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'milo.db');
-const MASTER_POOL_DIR = process.env.MASTER_POOL_DIR || 'C:/Media/Music/MasterPool';
+const DB_PATH = normalizeFilesystemPath(String(process.env.DB_PATH || path.join(__dirname, 'data', 'milo.db')));
+const MASTER_POOL_DIR = normalizeFilesystemPath(String(process.env.MASTER_POOL_DIR || 'C:/Media/Music/MasterPool'));
 
-const LIBRARY_PATH = path.resolve(process.env.LIBRARY_PATH || path.join(process.cwd(), 'MILO_Libraries'));
+const LIBRARY_PATH = normalizeFilesystemPath(String(process.env.LIBRARY_PATH || path.join(process.cwd(), 'MILO_Libraries')));
 const SPOTIPY_CLIENT_ID = process.env.SPOTIPY_CLIENT_ID || '';
 const SPOTIPY_CLIENT_SECRET = process.env.SPOTIPY_CLIENT_SECRET || '';
 const APPLE_DEVELOPER_TOKEN = process.env.APPLE_DEVELOPER_TOKEN || '';
@@ -35,17 +35,27 @@ function resolveUserLibraryPath(userOrPath) {
     if (process.platform !== 'win32' && /^[A-Za-z]:\//.test(normalizedInput)) {
         throw new Error('Use an absolute path for this operating system (for example, /media/music/username on Linux/Docker).');
     }
-    if (path.isAbsolute(normalizedInput)) return path.resolve(normalizedInput);
-    const resolved = path.resolve(LIBRARY_PATH, normalizedInput);
+    if (path.isAbsolute(normalizedInput)) return normalizeFilesystemPath(normalizedInput);
+    const resolved = normalizeFilesystemPath(LIBRARY_PATH, normalizedInput);
     if (!pathSameOrInside(resolved, LIBRARY_PATH)) {
         throw new Error('Relative library folders must remain inside LIBRARY_PATH. Enter an absolute path to use a folder elsewhere.');
     }
     return resolved;
 }
 
+function normalizeFilesystemPath(...values) {
+    const parts = values.map(value => String(value == null ? '' : value).trim().replace(/\\/g, '/'));
+    if (!parts.length || !parts[0]) return '';
+    return path.resolve(...parts).replace(/\\/g, '/');
+}
+
+function displayFilesystemPath(value) {
+    return String(value == null ? '' : value).replace(/\\/g, '/');
+}
+
 function sameResolvedPath(first, second) {
-    const a = path.resolve(first);
-    const b = path.resolve(second);
+    const a = normalizeFilesystemPath(first);
+    const b = normalizeFilesystemPath(second);
     return (process.platform === 'win32' ? a.toLowerCase() : a) === (process.platform === 'win32' ? b.toLowerCase() : b);
 }
 
@@ -61,7 +71,7 @@ function normalizeIntervalToSchedule(value, schedules) {
 }
 
 const DRIVEPOOL_DRIVES = process.env.DRIVEPOOL_DRIVES
-    ? process.env.DRIVEPOOL_DRIVES.split(',').map(d => d.trim()).filter(Boolean)
+    ? process.env.DRIVEPOOL_DRIVES.split(',').map(d => d.trim().replace(/\\/g, '/').replace(/\/+$/g, '')).filter(Boolean)
     : [];
 
 app.set('view engine', 'ejs');
@@ -87,7 +97,7 @@ const db = new Database(DB_PATH, { timeout: 15000 });
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
-const historyDb = new Database(path.join(path.dirname(DB_PATH), 'sync_history.db'), { timeout: 15000 });
+const historyDb = new Database(normalizeFilesystemPath(path.dirname(DB_PATH), 'sync_history.db'), { timeout: 15000 });
 historyDb.pragma('journal_mode = WAL');
 
 function initDb() {
@@ -179,7 +189,7 @@ function initDb() {
     const adminExists = db.prepare("SELECT 1 FROM users WHERE role = 'admin'").get();
     if (!adminExists) {
 
-        const targetDir = path.join(LIBRARY_PATH, 'Admin_Library');
+        const targetDir = normalizeFilesystemPath(LIBRARY_PATH, 'Admin_Library');
         fs.mkdirSync(targetDir, { recursive: true });
         const hash = bcrypt.hashSync("admin", 10);
         db.prepare(
@@ -245,6 +255,31 @@ function initDb() {
         CREATE INDEX IF NOT EXISTS idx_missing_log_history_user ON missing_log_history(user_id, id DESC);
     `);
 
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS background_task_history (
+            task_id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            task_type TEXT NOT NULL DEFAULT '',
+            label TEXT NOT NULL,
+            user_id INTEGER,
+            username TEXT NOT NULL DEFAULT '',
+            requested_by TEXT NOT NULL DEFAULT '',
+            trigger_source TEXT NOT NULL DEFAULT 'manual',
+            trigger_detail TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'queued',
+            created_at INTEGER NOT NULL,
+            started_at INTEGER,
+            completed_at INTEGER,
+            duration_ms INTEGER,
+            message TEXT NOT NULL DEFAULT '',
+            error_trace TEXT NOT NULL DEFAULT '',
+            result_summary TEXT NOT NULL DEFAULT '',
+            updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_background_task_history_completed ON background_task_history(completed_at DESC, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_background_task_history_status ON background_task_history(status, created_at DESC);
+    `);
+
     const masterScheduleRow = db.prepare("SELECT value FROM scan_settings WHERE key = 'master_scan_interval'").get();
     if (masterScheduleRow) {
         const normalizedSchedule = normalizeIntervalToSchedule(masterScheduleRow.value, MASTER_SCAN_SCHEDULES);
@@ -269,12 +304,124 @@ function initDb() {
 
 initDb();
 
+function normalizeStoredCatalogPaths() {
+    const rows = db.prepare('SELECT id, file_path FROM catalog ORDER BY id').all();
+    const groups = new Map();
+    for (const row of rows) {
+        const normalizedPath = normalizeFilesystemPath(row.file_path);
+        const key = process.platform === 'win32' ? normalizedPath.toLowerCase() : normalizedPath;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(row);
+    }
+    const merge = db.transaction((group, canonicalPath, keeperId) => {
+        for (const duplicate of group) {
+            if (Number(duplicate.id) === Number(keeperId)) continue;
+            db.prepare(`INSERT OR IGNORE INTO user_tracks (user_id, track_id)
+                SELECT user_id, ? FROM user_tracks WHERE track_id = ?`).run(keeperId, duplicate.id);
+            db.prepare('DELETE FROM catalog WHERE id = ?').run(duplicate.id);
+        }
+        db.prepare('UPDATE catalog SET file_path = ? WHERE id = ?').run(canonicalPath, keeperId);
+    });
+    for (const group of groups.values()) {
+        if (!group.length) continue;
+        const canonicalPath = normalizeFilesystemPath(group[0].file_path);
+        const keeper = group.find(row => row.file_path === canonicalPath) || group[0];
+        if (group.length === 1 && keeper.file_path === canonicalPath) continue;
+        try { merge(group, canonicalPath, keeper.id); }
+        catch (error) {
+            console.warn(`[Catalog] Could not fully normalize stored path ${canonicalPath}: ${error.message}`);
+        }
+    }
+}
+
+normalizeStoredCatalogPaths();
+
+function saveBackgroundTaskHistory(task) {
+    if (!task || !task.id) return;
+    try {
+        const completedAt = Number(task.completedAt) || null;
+        const startedAt = Number(task.startedAt) || null;
+        const createdAt = Number(task.createdAt) || Date.now();
+        const user = task.payload && task.payload.user ? task.payload.user : null;
+        const username = String(user?.username || task.username || task.requestedByUsername || '');
+        const status = task.status === 'auto_completed' ? 'completed' : String(task.status || 'queued');
+        const triggerSource = task.scheduled ? 'scheduled cron' : 'manual';
+        const triggerDetail = String(task.trigger || task.payload?.sourceType || task.label || '').slice(0, 500);
+        const message = String(task.message || task.error || '').slice(0, 5000);
+        const errorTrace = String(task.errorTrace || (status === 'error' ? task.error || task.message || '' : '')).slice(0, 30000);
+        let resultSummary = '';
+        if (task.result != null) {
+            try { resultSummary = JSON.stringify(task.result).slice(0, 5000); }
+            catch (_) { resultSummary = String(task.result).slice(0, 5000); }
+        }
+        const durationMs = startedAt && completedAt ? Math.max(0, completedAt - startedAt) : null;
+        db.prepare(`
+            INSERT INTO background_task_history (
+                task_id, kind, task_type, label, user_id, username, requested_by,
+                trigger_source, trigger_detail, status, created_at, started_at,
+                completed_at, duration_ms, message, error_trace, result_summary, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(task_id) DO UPDATE SET
+                kind = excluded.kind, task_type = excluded.task_type, label = excluded.label,
+                user_id = excluded.user_id, username = excluded.username, requested_by = excluded.requested_by,
+                trigger_source = excluded.trigger_source, trigger_detail = excluded.trigger_detail,
+                status = excluded.status, created_at = excluded.created_at, started_at = excluded.started_at,
+                completed_at = excluded.completed_at, duration_ms = excluded.duration_ms,
+                message = excluded.message, error_trace = excluded.error_trace,
+                result_summary = excluded.result_summary, updated_at = excluded.updated_at
+        `).run(
+            String(task.id), String(task.kind || 'task'), String(task.scanType || task.kind || ''),
+            String(task.label || 'MILO background task').slice(0, 500),
+            task.userId == null ? null : Number(task.userId), username.slice(0, 256),
+            String(task.requestedByUsername || '').slice(0, 256), triggerSource, triggerDetail,
+            status, createdAt, startedAt, completedAt, durationMs,
+            message, errorTrace, resultSummary, Date.now()
+        );
+    } catch (error) {
+        console.warn('[Task History] Could not save background task history:', error.message);
+    }
+}
+
+function startStandaloneTaskHistory(job, requester, label, triggerDetail = '') {
+    if (!job || typeof job !== 'object') return job;
+    job.historyTaskId = job.historyTaskId || crypto.randomUUID();
+    job.historyCreatedAt = Number(job.historyCreatedAt || job.createdAt || job.startedAt) || Date.now();
+    job.historyRequestedByUserId = requester && requester.id != null ? Number(requester.id) : null;
+    job.historyRequestedByUsername = String(requester && requester.username || 'System');
+    job.historyLabel = String(label || job.label || job.task || 'Background task');
+    job.historyTriggerDetail = String(triggerDetail || job.task || 'manual');
+    persistStandaloneTaskHistory(job);
+    return job;
+}
+
+function persistStandaloneTaskHistory(job) {
+    if (!job || !job.historyTaskId) return;
+    saveBackgroundTaskHistory({
+        id: job.historyTaskId,
+        kind: job.historyKind || 'maintenance',
+        scanType: job.task || job.historyKind || 'maintenance',
+        label: job.historyLabel || job.task || 'Background task',
+        userId: job.historyRequestedByUserId,
+        username: job.historyRequestedByUsername || 'System',
+        requestedByUsername: job.historyRequestedByUsername || '',
+        scheduled: job.scheduled === true,
+        trigger: job.historyTriggerDetail || job.trigger || job.task || 'manual',
+        status: job.status,
+        createdAt: job.historyCreatedAt || job.createdAt || job.startedAt || Date.now(),
+        startedAt: job.startedAt || job.historyCreatedAt || job.createdAt || Date.now(),
+        completedAt: job.completedAt,
+        message: job.message || '',
+        errorTrace: job.errorTrace || (job.status === 'error' ? job.message || '' : ''),
+        result: job.result
+    });
+}
+
 function normalizeTextPlaylistQuery(value) {
     return String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
         .replace(/[^\p{L}\p{N}]+/gu, ' ').trim().toLowerCase();
 }
 
-const WANTED_TRACKS_FILE = path.join(path.dirname(path.resolve(DB_PATH)), 'wanted-tracks.txt');
+const WANTED_TRACKS_FILE = normalizeFilesystemPath(path.dirname(DB_PATH), 'wanted-tracks.txt');
 let wantedTracksRefreshChain = Promise.resolve();
 
 function getWantedTracksSettings() {
@@ -285,7 +432,7 @@ function getWantedTracksSettings() {
     return {
         mode: validModes.has(values.wanted_tracks_mode) ? values.wanted_tracks_mode : 'file',
         post_url: String(values.wanted_tracks_post_url || ''),
-        file_path: WANTED_TRACKS_FILE,
+        file_path: displayFilesystemPath(WANTED_TRACKS_FILE),
         last_generated_at: values.wanted_tracks_last_generated_at || '',
         last_result: values.wanted_tracks_last_result || '',
         last_count: Number.parseInt(values.wanted_tracks_last_count, 10) || 0
@@ -703,27 +850,43 @@ function catalogSearchString(artist, title) {
 }
 
 function upsertCatalogTrack(filePath, tags = {}) {
+    filePath = normalizeFilesystemPath(filePath);
     if (!filePath || !fs.existsSync(filePath)) return;
-    const previous = db.prepare('SELECT title, artist, album FROM catalog WHERE file_path = ?').get(filePath);
+    let previous = db.prepare('SELECT id, file_path, title, artist, album FROM catalog WHERE file_path = ?').get(filePath);
+
+    if (!previous) {
+        const key = normalizedPathKey(filePath);
+        previous = db.prepare('SELECT id, file_path, title, artist, album FROM catalog').all()
+            .find(row => normalizedPathKey(row.file_path) === key) || null;
+    }
     const title = String(tags.title || (previous && previous.title) || path.parse(filePath).name || 'Unknown');
     const artist = String(tags.artist || tags.albumartist || (previous && previous.artist) || 'Unknown');
     const album = String(tags.album || (previous && previous.album) || 'Unknown');
     let mtime = 0;
     try { mtime = fs.statSync(filePath).mtimeMs / 1000; } catch (e) {}
-    db.prepare(`
-        INSERT INTO catalog (file_path, title, artist, album, search_str, added_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(file_path) DO UPDATE SET
-            title=excluded.title, artist=excluded.artist, album=excluded.album,
-            search_str=excluded.search_str, added_at=excluded.added_at
-    `).run(filePath, title, artist, album, catalogSearchString(artist, title), mtime);
+    if (previous) {
+        db.prepare(`UPDATE catalog SET file_path = ?, title = ?, artist = ?, album = ?, search_str = ?, added_at = ? WHERE id = ?`)
+            .run(filePath, title, artist, album, catalogSearchString(artist, title), mtime, previous.id);
+    } else {
+        db.prepare(`INSERT INTO catalog (file_path, title, artist, album, search_str, added_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(file_path) DO UPDATE SET
+                title=excluded.title, artist=excluded.artist, album=excluded.album,
+                search_str=excluded.search_str, added_at=excluded.added_at`)
+            .run(filePath, title, artist, album, catalogSearchString(artist, title), mtime);
+    }
 }
 
 function updateCatalogTrackPath(oldPath, newPath, tags = {}) {
-    const oldTrack = db.prepare('SELECT id FROM catalog WHERE file_path = ?').get(oldPath);
+    oldPath = normalizeFilesystemPath(oldPath);
+    newPath = normalizeFilesystemPath(newPath);
+    const findCatalogPath = candidate => db.prepare('SELECT id, file_path FROM catalog WHERE file_path = ?').get(candidate)
+        || db.prepare('SELECT id, file_path FROM catalog').all().find(row => normalizedPathKey(row.file_path) === normalizedPathKey(candidate))
+        || null;
+    const oldTrack = findCatalogPath(oldPath);
     if (!oldTrack) return true;
-    const destinationTrack = db.prepare('SELECT id FROM catalog WHERE file_path = ?').get(newPath);
-    const oldPathsToReconcile = [oldPath];
+    const destinationTrack = findCatalogPath(newPath);
+    const oldPathsToReconcile = [...new Set([oldTrack.file_path, oldPath])];
     if (destinationTrack && Number(destinationTrack.id) !== Number(oldTrack.id)) {
 
         oldPathsToReconcile.push(newPath);
@@ -772,7 +935,7 @@ const organizer = new Organizer({
         if (!Number.isSafeInteger(assignedUserId) || assignedUserId <= 0) return;
 
         const user = db.prepare('SELECT * FROM users WHERE id = ?').get(assignedUserId);
-        const track = db.prepare('SELECT id FROM catalog WHERE file_path = ?').get(path.resolve(filePath));
+        const track = db.prepare('SELECT id FROM catalog WHERE file_path = ?').get(normalizeFilesystemPath(filePath));
         if (!user || !track) {
             console.warn(`[Organizer] Could not assign dump-folder track ${filePath}: tagged user or catalog row was not found.`);
             return;
@@ -811,19 +974,21 @@ function requireTextPlaylistApiKey(req, res, next) {
 
 function resolveDrivePoolPath(filePath) {
     if (!DRIVEPOOL_DRIVES.length || !filePath) return null;
+    filePath = normalizeFilesystemPath(filePath);
     const parsed = path.parse(filePath);
     const relativePath = filePath.substring(parsed.root.length);
 
     for (const rawDrive of DRIVEPOOL_DRIVES) {
-        let driveRoot = rawDrive.endsWith('\\') ? rawDrive : (rawDrive.endsWith(':') ? `${rawDrive}\\` : `${rawDrive}:\\`);
+        const cleanDrive = String(rawDrive).replace(/\/+$/g, '');
+        const driveRoot = `${cleanDrive}/`;
         try {
             if (!fs.existsSync(driveRoot)) continue;
             const entries = fs.readdirSync(driveRoot);
             const poolPart = entries.find(e => e.startsWith('PoolPart.'));
 
             if (poolPart) {
-                const poolPartDir = path.join(driveRoot, poolPart);
-                const physicalPath = path.join(poolPartDir, relativePath);
+                const poolPartDir = normalizeFilesystemPath(driveRoot, poolPart);
+                const physicalPath = normalizeFilesystemPath(poolPartDir, relativePath);
                 if (fs.existsSync(physicalPath)) return { physicalPath, poolPartDir, relativePath };
             }
         } catch (e) {}
@@ -833,14 +998,18 @@ function resolveDrivePoolPath(filePath) {
 
 function removeExistingFileOrLink(filePath) {
     try {
-        const stat = fs.lstatSync(filePath, { throwIfNoEntry: false });
-        if (fs.existsSync(filePath) || (stat && (stat.isSymbolicLink() || stat.isFile() || stat.isDirectory()))) {
-            fs.rmSync(filePath, { recursive: true, force: true });
+        const resolved = normalizeFilesystemPath(filePath);
+        const stat = fs.lstatSync(resolved, { throwIfNoEntry: false });
+        if (fs.existsSync(resolved) || (stat && (stat.isSymbolicLink() || stat.isFile() || stat.isDirectory()))) {
+            fs.rmSync(resolved, { recursive: true, force: true });
         }
     } catch (e) {}
 }
 
 function linkFile(sourcePath, targetPath, mode = 'standard') {
+    sourcePath = normalizeFilesystemPath(sourcePath);
+    targetPath = normalizeFilesystemPath(targetPath);
+    if (!sourcePath || !targetPath) throw new Error('Source and destination paths are required to create a library link.');
     if (mode === 'advanced') {
         let actualSource = sourcePath;
         let actualTarget = targetPath;
@@ -850,7 +1019,7 @@ function linkFile(sourcePath, targetPath, mode = 'standard') {
             const drivePoolSource = resolveDrivePoolPath(sourcePath);
             if (drivePoolSource) {
                 actualSource = drivePoolSource.physicalPath;
-                actualTarget = path.join(drivePoolSource.poolPartDir, targetPath.substring(path.parse(targetPath).root.length));
+                actualTarget = normalizeFilesystemPath(drivePoolSource.poolPartDir, targetPath.substring(path.parse(targetPath).root.length));
                 activeDrivePoolDrive = drivePoolSource.poolPartDir;
             }
         }
@@ -875,7 +1044,7 @@ function linkFile(sourcePath, targetPath, mode = 'standard') {
             if (drivePoolSource) {
                 const targetParsed = path.parse(targetPath);
                 const targetRelative = targetPath.substring(targetParsed.root.length);
-                const physicalTarget = path.join(drivePoolSource.poolPartDir, targetRelative);
+                const physicalTarget = normalizeFilesystemPath(drivePoolSource.poolPartDir, targetRelative);
                 removeExistingFileOrLink(physicalTarget);
             }
         }
@@ -891,26 +1060,29 @@ function linkFile(sourcePath, targetPath, mode = 'standard') {
 
 function libraryLinkPathForPoolFile(libraryPath, poolFilePath) {
     const libraryRoot = resolveUserLibraryPath(libraryPath);
-    let relativePath = path.relative(path.resolve(MASTER_POOL_DIR), path.resolve(poolFilePath));
+    const sourcePath = normalizeFilesystemPath(poolFilePath);
+    if (!sourcePath) throw new Error('A source audio path is required to build its library link.');
+    let relativePath = path.relative(normalizeFilesystemPath(MASTER_POOL_DIR), sourcePath);
     if (!relativePath || relativePath === '..' || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
-        relativePath = path.basename(poolFilePath);
+        relativePath = path.basename(sourcePath);
     }
-    let target = path.resolve(libraryRoot, relativePath);
-    if (!pathSameOrInside(target, libraryRoot)) target = path.resolve(libraryRoot, path.basename(poolFilePath));
+    let target = normalizeFilesystemPath(libraryRoot, relativePath);
+    if (!pathSameOrInside(target, libraryRoot)) target = normalizeFilesystemPath(libraryRoot, path.basename(sourcePath));
     return target;
 }
 
 function pathEntryExists(filePath) {
-    try { return !!fs.lstatSync(filePath, { throwIfNoEntry: false }); }
+    try { return !!fs.lstatSync(normalizeFilesystemPath(filePath), { throwIfNoEntry: false }); }
     catch (_) { return false; }
 }
 
 function isBrokenPoolSymlink(filePath) {
     try {
-        const entry = fs.lstatSync(filePath);
-        if (!entry.isSymbolicLink() || fs.existsSync(filePath)) return false;
-        const rawTarget = fs.readlinkSync(filePath);
-        const linkTarget = path.resolve(path.dirname(filePath), rawTarget);
+        const resolvedPath = normalizeFilesystemPath(filePath);
+        const entry = fs.lstatSync(resolvedPath);
+        if (!entry.isSymbolicLink() || fs.existsSync(resolvedPath)) return false;
+        const rawTarget = fs.readlinkSync(resolvedPath);
+        const linkTarget = normalizeFilesystemPath(path.dirname(resolvedPath), rawTarget);
         return pathSameOrInside(linkTarget, MASTER_POOL_DIR) && !fs.existsSync(linkTarget);
     } catch (_) {
         return false;
@@ -919,6 +1091,8 @@ function isBrokenPoolSymlink(filePath) {
 
 function sameFileOnDisk(firstPath, secondPath) {
     try {
+        firstPath = normalizeFilesystemPath(firstPath);
+        secondPath = normalizeFilesystemPath(secondPath);
         const first = fs.statSync(firstPath);
         const second = fs.statSync(secondPath);
         if (!first.isFile() || !second.isFile()) return false;
@@ -927,7 +1101,7 @@ function sameFileOnDisk(firstPath, secondPath) {
         const entry = fs.lstatSync(firstPath);
         if (entry.isSymbolicLink()) {
             const rawTarget = fs.readlinkSync(firstPath);
-            const linkedTarget = path.resolve(path.dirname(firstPath), rawTarget);
+            const linkedTarget = normalizeFilesystemPath(path.dirname(firstPath), rawTarget);
             return normalizedPathKey(linkedTarget) === normalizedPathKey(secondPath);
         }
         return false;
@@ -937,7 +1111,7 @@ function sameFileOnDisk(firstPath, secondPath) {
 }
 
 function normalizedPathKey(filePath) {
-    const resolved = path.resolve(filePath);
+    const resolved = normalizeFilesystemPath(filePath);
     return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
@@ -951,23 +1125,24 @@ function addTrackToUserLibrary(user, trackId) {
         throw new Error('The selected audio file is no longer available in the Master Pool. Run a scan and try again.');
     }
 
+    const sourcePath = normalizeFilesystemPath(track.file_path);
     const libraryRoot = resolveUserLibraryPath(user);
-    const linkPath = libraryLinkPathForPoolFile(libraryRoot, track.file_path);
+    const linkPath = libraryLinkPathForPoolFile(libraryRoot, sourcePath);
     const assigned = !!db.prepare('SELECT 1 FROM user_tracks WHERE user_id = ? AND track_id = ?')
         .get(Number(user.id), id);
     let createdLink = false;
 
     fs.mkdirSync(libraryRoot, { recursive: true });
-    if (pathEntryExists(linkPath) && !sameFileOnDisk(linkPath, track.file_path)) {
+    if (pathEntryExists(linkPath) && !sameFileOnDisk(linkPath, sourcePath)) {
         if (isBrokenPoolSymlink(linkPath)) removeExistingFileOrLink(linkPath);
         else throw new Error(`MILO found a different file at the expected library path and left it untouched: ${linkPath}`);
     }
 
     if (!pathEntryExists(linkPath)) {
-        linkFile(track.file_path, linkPath, user.index_mode || 'standard');
+        linkFile(sourcePath, linkPath, user.index_mode || 'standard');
         createdLink = true;
     }
-    if (!sameFileOnDisk(linkPath, track.file_path)) {
+    if (!sameFileOnDisk(linkPath, sourcePath)) {
         if (createdLink) removeExistingFileOrLink(linkPath);
         throw new Error('MILO could not verify the library link after creating it. Check the library path and indexing mode.');
     }
@@ -988,16 +1163,17 @@ function removeTrackFromUserLibrary(user, trackId) {
     const id = Number.parseInt(trackId, 10);
     if (!Number.isSafeInteger(id) || id <= 0) throw new Error('A valid catalog track must be selected.');
     const track = db.prepare('SELECT id, file_path FROM catalog WHERE id = ?').get(id);
-    const linkPath = track ? libraryLinkPathForPoolFile(resolveUserLibraryPath(user), track.file_path) : '';
+    const sourcePath = track ? normalizeFilesystemPath(track.file_path) : '';
+    const linkPath = sourcePath ? libraryLinkPathForPoolFile(resolveUserLibraryPath(user), sourcePath) : '';
     const result = db.prepare('DELETE FROM user_tracks WHERE user_id = ? AND track_id = ?').run(Number(user.id), id);
 
     if (track && linkPath && pathEntryExists(linkPath)) {
 
-        if (sameFileOnDisk(linkPath, track.file_path) || isBrokenPoolSymlink(linkPath)) {
+        if (sameFileOnDisk(linkPath, sourcePath) || isBrokenPoolSymlink(linkPath)) {
             removeExistingFileOrLink(linkPath);
             let currentDir = path.dirname(linkPath);
             const libraryRoot = resolveUserLibraryPath(user);
-            while (currentDir && path.resolve(currentDir) !== libraryRoot && pathSameOrInside(currentDir, libraryRoot)) {
+            while (currentDir && normalizeFilesystemPath(currentDir) !== libraryRoot && pathSameOrInside(currentDir, libraryRoot)) {
                 try { fs.rmdirSync(currentDir); currentDir = path.dirname(currentDir); }
                 catch (_) { break; }
             }
@@ -1077,16 +1253,17 @@ function convertUserLinks(userId, newMode) {
 
     try {
         for (const track of userTracks) {
-            if (fs.existsSync(track.file_path)) {
-                let relPath = path.relative(MASTER_POOL_DIR, track.file_path);
-                if (relPath.startsWith('..')) relPath = path.basename(track.file_path);
+            const sourcePath = normalizeFilesystemPath(track.file_path);
+            if (sourcePath && fs.existsSync(sourcePath)) {
+                let relPath = path.relative(normalizeFilesystemPath(MASTER_POOL_DIR), sourcePath);
+                if (relPath.startsWith('..')) relPath = path.basename(sourcePath);
                 const libraryRoot = resolveUserLibraryPath(user);
-                let targetPath = path.join(libraryRoot, relPath);
+                let targetPath = normalizeFilesystemPath(libraryRoot, relPath);
                 if (!pathSameOrInside(targetPath, libraryRoot)) {
-                    targetPath = path.join(libraryRoot, path.basename(track.file_path));
+                    targetPath = normalizeFilesystemPath(libraryRoot, path.basename(sourcePath));
                 }
-                linkFile(track.file_path, targetPath, newMode);
-                processedTracks.push({ source: track.file_path, target: targetPath });
+                linkFile(sourcePath, targetPath, newMode);
+                processedTracks.push({ source: sourcePath, target: targetPath });
                 converted++;
             }
         }
@@ -1104,7 +1281,8 @@ async function extractTags(filepath) {
     const filename = path.basename(filepath);
     let title = path.parse(filename).name, artist = "Unknown", album = "Unknown";
     try {
-        const metadata = await mm.parseFile(filepath);
+        const extension = path.extname(filepath).slice(1).toLowerCase();
+        const metadata = await mm.parseFile(filepath, { skipCovers: true, ...(['opus', 'ogg'].includes(extension) ? { duration: true } : {}) });
         if (metadata.common.title) title = metadata.common.title;
         if (metadata.common.artist) artist = metadata.common.artist;
         if (metadata.common.album) album = metadata.common.album;
@@ -1119,7 +1297,7 @@ async function extractTags(filepath) {
 
 async function walkDir(dir, exemptPaths = [], onProgress = null, onDirectoryError = null) {
     const results = [];
-    const stack = [path.resolve(dir)];
+    const stack = [normalizeFilesystemPath(dir)];
     const excluded = (candidate) => exemptPaths.some(root => pathSameOrInside(candidate, root));
     let visitedEntries = 0;
 
@@ -1131,7 +1309,7 @@ async function walkDir(dir, exemptPaths = [], onProgress = null, onDirectoryErro
         catch (error) {
             if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') {
                 if (typeof onDirectoryError === 'function') {
-                    try { onDirectoryError({ directory: path.resolve(current), error }); } catch (_) {}
+                    try { onDirectoryError({ directory: normalizeFilesystemPath(current), error }); } catch (_) {}
                 } else if (error.code !== 'EACCES') {
                     console.warn(`[Catalog] Could not read directory ${current}: ${error.message}`);
                 }
@@ -1140,11 +1318,16 @@ async function walkDir(dir, exemptPaths = [], onProgress = null, onDirectoryErro
         }
 
         for (const entry of entries) {
-            const fullPath = path.join(current, entry.name);
+            const fullPath = normalizeFilesystemPath(current, entry.name);
             if (entry.isDirectory()) {
                 if (!excluded(fullPath)) stack.push(fullPath);
-            } else if (entry.isFile() && /\.(mp3|flac|m4a|ogg|wav|opus|aac|wma|aiff|aif)$/i.test(entry.name)) {
-                results.push(fullPath);
+            } else if ((entry.isFile() || entry.isSymbolicLink()) && /\.(mp3|flac|m4a|ogg|wav|opus|aac|wma|aiff|aif)$/i.test(entry.name)) {
+                try {
+                    const stat = entry.isSymbolicLink() ? await fs.promises.stat(fullPath) : null;
+                    if (entry.isFile() || (stat && stat.isFile())) results.push(fullPath);
+                } catch (_) {
+
+                }
             }
             if (++visitedEntries % 200 === 0) {
                 if (typeof onProgress === 'function') {
@@ -1194,7 +1377,10 @@ function getExemptPaths() {
         }
     } catch (e) {}
 
-    return exemptPaths.map(p => path.isAbsolute(p) ? path.resolve(p) : path.resolve(MASTER_POOL_DIR, p));
+    return exemptPaths.map(p => {
+        const normalized = String(p || '').trim().replace(/\\/g, '/');
+        return path.isAbsolute(normalized) ? normalizeFilesystemPath(normalized) : normalizeFilesystemPath(MASTER_POOL_DIR, normalized);
+    });
 }
 
 function normalizeCatalogValue(value) {
@@ -1204,18 +1390,19 @@ function normalizeCatalogValue(value) {
 
 function pathSameOrInside(candidatePath, rootPath) {
     if (!candidatePath || !rootPath) return false;
-    const candidate = path.resolve(candidatePath);
-    const root = path.resolve(rootPath);
+    const candidate = normalizeFilesystemPath(candidatePath);
+    const root = normalizeFilesystemPath(rootPath);
+    if (!candidate || !root) return false;
     const relative = path.relative(root, candidate);
     return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
 function isLiveCatalogPoolPath(filePath, exemptPaths = getExemptPaths()) {
-    if (!filePath || !fs.existsSync(filePath)) return false;
-    const resolved = path.resolve(filePath);
-    if (!/\.(mp3|flac|m4a|ogg|wav|opus|aac|wma|aiff|aif)$/i.test(resolved)) return false;
-    if (!Organizer.pathIsInside(resolved, MASTER_POOL_DIR)) return false;
-    try { if (!fs.lstatSync(resolved).isFile()) return false; }
+    const resolved = normalizeFilesystemPath(filePath);
+    if (!resolved || !/\.(mp3|flac|m4a|ogg|wav|opus|aac|wma|aiff|aif)$/i.test(resolved)) return false;
+    if (!pathSameOrInside(resolved, MASTER_POOL_DIR) || pathSameOrInside(MASTER_POOL_DIR, resolved)) return false;
+
+    try { if (!fs.statSync(resolved).isFile()) return false; }
     catch (_) { return false; }
     return !exemptPaths.some(exempt => pathSameOrInside(resolved, exempt));
 }
@@ -1232,7 +1419,7 @@ function invalidateLiveCatalogSnapshot() {
 }
 function getLiveCatalogSnapshot(force = false) {
     const exemptPaths = getExemptPaths();
-    const key = [MASTER_POOL_DIR, ...exemptPaths].map(p => path.resolve(p).toLowerCase()).join('\n');
+    const key = [MASTER_POOL_DIR, ...exemptPaths].map(p => { const value = normalizeFilesystemPath(p); return process.platform === 'win32' ? value.toLowerCase() : value; }).join('\n');
     if (!force && liveCatalogSnapshot.key === key && Date.now() - liveCatalogSnapshot.createdAt < 5000) return liveCatalogSnapshot;
     const rows = db.prepare('SELECT id, file_path FROM catalog').all()
         .filter(row => isLiveCatalogPoolPath(row.file_path, exemptPaths));
@@ -1250,11 +1437,14 @@ function getLiveCatalogSnapshot(force = false) {
 
 function mergeCatalogPathAliases(actualPoolFiles) {
 
-    if (process.platform !== 'win32') return 0;
-    const actualPaths = new Map(actualPoolFiles.map(filePath => [path.resolve(filePath).toLowerCase(), path.resolve(filePath)]));
+    const pathKey = value => {
+        const resolved = normalizeFilesystemPath(value);
+        return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+    };
+    const actualPaths = new Map(actualPoolFiles.map(filePath => [pathKey(filePath), normalizeFilesystemPath(filePath)]));
     const groups = new Map();
     for (const row of db.prepare('SELECT id, file_path FROM catalog').all()) {
-        const key = path.resolve(row.file_path).toLowerCase();
+        const key = pathKey(row.file_path);
         if (!actualPaths.has(key)) continue;
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(row);
@@ -1268,7 +1458,7 @@ function mergeCatalogPathAliases(actualPoolFiles) {
             continue;
         }
         const canonicalPath = actualPaths.get(key);
-        const keeper = group.find(row => path.resolve(row.file_path) === canonicalPath) || [...group].sort((a, b) => a.id - b.id)[0];
+        const keeper = group.find(row => normalizeFilesystemPath(row.file_path) === canonicalPath) || [...group].sort((a, b) => a.id - b.id)[0];
         const duplicates = group.filter(row => row.id !== keeper.id);
         db.transaction(() => {
             for (const duplicate of duplicates) {
@@ -1290,10 +1480,10 @@ async function getLiveCatalogEmbeddedRows() {
     const metadataCache = new Map();
     for (const row of live) {
         try {
-            let tags = metadataCache.get(path.resolve(row.file_path));
+            let tags = metadataCache.get(normalizeFilesystemPath(row.file_path));
             if (!tags) {
                 tags = await organizer.getEmbeddedMetadataForPath(row.file_path);
-                metadataCache.set(path.resolve(row.file_path), tags || {});
+                metadataCache.set(normalizeFilesystemPath(row.file_path), tags || {});
             }
             row.embedded = tags || {};
             row.quality = organizer.qualityProfile(row.file_path, row.embedded);
@@ -1410,7 +1600,7 @@ function chooseDeadRowReplacement(deadRow, matches) {
 }
 
 function deadCandidatePathKey(filePath) {
-    const resolved = path.resolve(filePath);
+    const resolved = normalizeFilesystemPath(filePath);
     return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
@@ -1430,7 +1620,7 @@ async function getDeadFileCandidateRows(deadRows = [], options = {}) {
         FROM file_records WHERE source_type = 'pool'`).all();
 
     const makeCandidate = (filePath, embedded, catalogRow = null, record = null) => ({
-        ...(catalogRow || {}), file_path: path.resolve(filePath),
+        ...(catalogRow || {}), file_path: normalizeFilesystemPath(filePath),
         title: String((embedded && embedded.title) || (catalogRow && catalogRow.title) || path.parse(filePath).name),
         artist: String((embedded && (embedded.artist || embedded.albumartist)) || (catalogRow && catalogRow.artist) || ''),
         album: String((embedded && embedded.album) || (catalogRow && catalogRow.album) || ''),
@@ -1441,7 +1631,7 @@ async function getDeadFileCandidateRows(deadRows = [], options = {}) {
 
     for (let i = 0; i < fileRecords.length; i++) {
         const record = fileRecords[i];
-        const filePath = path.resolve(record.file_path);
+        const filePath = normalizeFilesystemPath(record.file_path);
         if (!Organizer.pathIsInside(filePath, MASTER_POOL_DIR)
             || !/\.(mp3|flac|m4a|ogg|wav|opus|aac|wma|aiff|aif)$/i.test(filePath)
             || exemptPaths.some(exempt => pathSameOrInside(filePath, exempt))) continue;
@@ -1458,7 +1648,7 @@ async function getDeadFileCandidateRows(deadRows = [], options = {}) {
         const folders = new Map();
         const poolKey = deadCandidatePathKey(MASTER_POOL_DIR);
         for (const deadRow of deadRows) {
-            const folder = path.resolve(path.dirname(deadRow.file_path || ''));
+            const folder = normalizeFilesystemPath(path.dirname(normalizeFilesystemPath(deadRow.file_path || '')));
             const folderKey = deadCandidatePathKey(folder);
             if (folders.has(folderKey) || folderKey === poolKey || !pathSameOrInside(folder, MASTER_POOL_DIR)) continue;
             if (exemptPaths.some(exempt => pathSameOrInside(folder, exempt)) || !fs.existsSync(folder)) continue;
@@ -1467,7 +1657,7 @@ async function getDeadFileCandidateRows(deadRows = [], options = {}) {
         for (const folder of folders.values()) {
             const diskPaths = await walkDir(folder, exemptPaths);
             for (let i = 0; i < diskPaths.length; i++) {
-                const filePath = path.resolve(diskPaths[i]);
+                const filePath = normalizeFilesystemPath(diskPaths[i]);
                 const key = deadCandidatePathKey(filePath);
                 const indexed = recordByPath.get(key) || null;
                 if (byPath.has(key) && indexed) {
@@ -1508,7 +1698,7 @@ async function findMissingCatalogRows(rows, exemptPaths = getExemptPaths(), onPr
     for (const row of rows) {
         if (!Organizer.pathIsInside(row.file_path, MASTER_POOL_DIR)
             || exemptPaths.some(exempt => pathSameOrInside(row.file_path, exempt))) continue;
-        const directory = path.resolve(path.dirname(row.file_path));
+        const directory = normalizeFilesystemPath(path.dirname(normalizeFilesystemPath(row.file_path)));
         const key = deadCandidatePathKey(directory);
         if (!folders.has(key)) folders.set(key, { directory, rows: [] });
         folders.get(key).rows.push(row);
@@ -1622,7 +1812,7 @@ async function runDeadFileRepairJob(items) {
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
             const id = Number(item.id);
-            const replacementPath = path.resolve(String(item.replacement_path || ''));
+            const replacementPath = normalizeFilesystemPath(String(item.replacement_path || ''));
             const deadRow = rowsById.get(id);
             activeDeadFileJob.message = `Repairing selected catalog entries: ${i + 1} / ${items.length}`;
             try {
@@ -1658,17 +1848,23 @@ async function runDeadFileRepairJob(items) {
         invalidateLiveCatalogSnapshot();
         lastLibraryLinkReconcileAt.clear();
         activeDeadFileJob = {
+            ...activeDeadFileJob,
             status: 'completed', task: 'dead-files-repair', progress: items.length, total: items.length,
             message: `Catalog repair finished: ${repaired} repaired${failed ? `, ${failed} need attention` : ''}.`,
             result: { repaired, failed, items: results.slice(0, 100) },
+            errorTrace: failed ? results.filter(item => !item.success).map(item => `Catalog entry ${item.id}: ${item.message}`).join('\n') : '',
             startedAt: activeDeadFileJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false
         };
+        persistStandaloneTaskHistory(activeDeadFileJob);
     } catch (error) {
         activeDeadFileJob = {
+            ...activeDeadFileJob,
             status: 'error', task: 'dead-files-repair', progress: activeDeadFileJob.progress || 0,
-            total: items.length, message: error.message, result: { repaired: 0, failed: items.length, items: results.slice(0, 100) },
+            total: items.length, message: error.message, errorTrace: error.stack || error.message,
+            result: { repaired: 0, failed: items.length, items: results.slice(0, 100) },
             startedAt: activeDeadFileJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false
         };
+        persistStandaloneTaskHistory(activeDeadFileJob);
     }
 }
 
@@ -1688,8 +1884,9 @@ async function runDeadFilesPurgeJob() {
         activeDeadFileJob.progress = 0;
         activeDeadFileJob.total = deadRows.length;
         if (!deadRows.length) {
-            activeDeadFileJob = { status: 'completed', task: 'dead-files-purge', progress: 0, total: 0,
+            activeDeadFileJob = { ...activeDeadFileJob, status: 'completed', task: 'dead-files-purge', progress: 0, total: 0,
                 message: 'Purge complete: no stale catalog entries were found.', result: { purged: 0 }, startedAt: activeDeadFileJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false };
+            persistStandaloneTaskHistory(activeDeadFileJob);
             return;
         }
         activeDeadFileJob.message = `Clearing ${deadRows.length.toLocaleString()} stale catalog entries...`;
@@ -1705,12 +1902,14 @@ async function runDeadFilesPurgeJob() {
         invalidateDeadFileResultsCache();
         invalidateLiveCatalogSnapshot();
         lastLibraryLinkReconcileAt.clear();
-        activeDeadFileJob = { status: 'completed', task: 'dead-files-purge', progress: deadRows.length, total: deadRows.length,
+        activeDeadFileJob = { ...activeDeadFileJob, status: 'completed', task: 'dead-files-purge', progress: deadRows.length, total: deadRows.length,
             message: `Purge complete: cleared ${deadRows.length.toLocaleString()} stale catalog entr${deadRows.length === 1 ? 'y' : 'ies'}. No audio files were deleted.`,
             result: { purged: deadRows.length }, startedAt: activeDeadFileJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false };
+        persistStandaloneTaskHistory(activeDeadFileJob);
     } catch (error) {
-        activeDeadFileJob = { status: 'error', task: 'dead-files-purge', progress: activeDeadFileJob.progress || 0,
-            total: activeDeadFileJob.total || 0, message: error.message, result: null, startedAt: activeDeadFileJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false };
+        activeDeadFileJob = { ...activeDeadFileJob, status: 'error', task: 'dead-files-purge', progress: activeDeadFileJob.progress || 0,
+            total: activeDeadFileJob.total || 0, message: error.message, errorTrace: error.stack || error.message, result: null, startedAt: activeDeadFileJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false };
+        persistStandaloneTaskHistory(activeDeadFileJob);
     }
 }
 
@@ -1732,7 +1931,7 @@ async function reconcileDeadCatalogPaths(scannedPoolPaths = null) {
     for (const deadRow of deadRows) {
         const replacement = chooseDeadRowReplacement(deadRow, deadRowMatchOptions(deadRow, candidateIndex, exemptPaths));
         if (!replacement || !replacement.album_match) continue;
-        const newPath = path.resolve(replacement.file_path);
+        const newPath = normalizeFilesystemPath(replacement.file_path);
         if (!isLiveCatalogPoolPath(newPath)) continue;
         try {
             const tags = replacement.embedded || {};
@@ -1898,7 +2097,7 @@ function scheduleLibraryLinkReconciliation(userId, userLibraryPath, indexMode, l
     });
 }
 
-async function runOrganizerPipeline(trigger = 'manual') {
+async function runOrganizerPipeline(trigger = 'manual', requestedBy = null) {
     if (activeOrganizerJob.status === 'running' || organizer.running) {
         return { busy: true, message: 'Organizer is already running.' };
     }
@@ -1908,6 +2107,7 @@ async function runOrganizerPipeline(trigger = 'manual') {
         message: `Starting organizer (${trigger})...`, result: null,
         startedAt: Date.now(), dismissed: false, nestedInScan
     };
+    if (!nestedInScan) startStandaloneTaskHistory(activeOrganizerJob, requestedBy, 'Organizer Processing', trigger);
     try {
         const result = await organizer.processDumps({
             onProgress: progress => {
@@ -1925,17 +2125,20 @@ async function runOrganizerPipeline(trigger = 'manual') {
             }
         });
         if (result.busy) {
-            activeOrganizerJob = { status: 'completed', task: 'organize', progress: 0, total: 0, message: result.message, result, startedAt: activeOrganizerJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false, nestedInScan };
+            activeOrganizerJob = { ...activeOrganizerJob, status: 'completed', task: 'organize', progress: 0, total: 0, message: result.message, result, startedAt: activeOrganizerJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false, nestedInScan };
+            if (!nestedInScan) persistStandaloneTaskHistory(activeOrganizerJob);
             return result;
         }
         invalidateLiveCatalogSnapshot();
         const summary = `Organizer finished: ${result.organized} organized, ${result.duplicates} byte-identical duplicates found, ${result.review} items awaiting review, ${result.skipped} skipped${result.errors ? `, ${result.errors} errors` : ''}.`;
-        activeOrganizerJob = { status: 'completed', task: 'organize', progress: result.total || result.processed, total: result.total, message: summary, result, startedAt: activeOrganizerJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false, nestedInScan };
+        activeOrganizerJob = { ...activeOrganizerJob, status: 'completed', task: 'organize', progress: result.total || result.processed, total: result.total, message: summary, result, startedAt: activeOrganizerJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false, nestedInScan };
+        if (!nestedInScan) persistStandaloneTaskHistory(activeOrganizerJob);
         return result;
     } catch (error) {
         invalidateLiveCatalogSnapshot();
         lastLibraryLinkReconcileAt.clear();
-        activeOrganizerJob = { status: 'error', task: 'organize', progress: activeOrganizerJob.progress, total: activeOrganizerJob.total, message: error.message, result: null, startedAt: activeOrganizerJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false, nestedInScan };
+        activeOrganizerJob = { ...activeOrganizerJob, status: 'error', task: 'organize', progress: activeOrganizerJob.progress, total: activeOrganizerJob.total, message: error.message, errorTrace: error.stack || error.message, result: null, startedAt: activeOrganizerJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false, nestedInScan };
+        if (!nestedInScan) persistStandaloneTaskHistory(activeOrganizerJob);
         throw error;
     }
 }
@@ -1959,11 +2162,14 @@ async function runOrganizerBulkReview(ids, action) {
     invalidateLiveCatalogSnapshot();
     lastLibraryLinkReconcileAt.clear();
     activeOrganizerJob = {
-        status: 'completed', task: 'bulk-review', progress: ids.length, total: ids.length,
+        ...activeOrganizerJob,
+        status: failed === ids.length && failed > 0 ? 'error' : 'completed', task: 'bulk-review', progress: ids.length, total: ids.length,
         message: `Bulk review finished: ${succeeded} succeeded${failed ? `, ${failed} need attention` : ''}.`,
+        errorTrace: failed ? errors.map(item => `Review item ${item.id}: ${item.message}`).join('\n') : '',
         result: { action, succeeded, failed, errors: errors.slice(0, 30) },
         startedAt: activeOrganizerJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false
     };
+    persistStandaloneTaskHistory(activeOrganizerJob);
 }
 
 async function executeMasterPoolScan(trigger = 'manual master-pool scan') {
@@ -2082,7 +2288,7 @@ async function executeMasterPoolScan(trigger = 'manual master-pool scan') {
         queueWantedTracksRefresh('detailed full scan');
         return activeScanJob;
     } catch (error) {
-        activeScanJob = { status: 'error', type: 'full', progress: activeScanJob.progress || 0, total: activeScanJob.total || 0, message: error.message, trigger, queueId: activeScanJob.queueId || activeQueueTaskId || null, startedAt: activeScanJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false };
+        activeScanJob = { status: 'error', type: 'full', progress: activeScanJob.progress || 0, total: activeScanJob.total || 0, message: error.message, errorTrace: error.stack || error.message, trigger, queueId: activeScanJob.queueId || activeQueueTaskId || null, startedAt: activeScanJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false };
         const failedAt = String(Date.now() / 1000);
         db.prepare("INSERT OR REPLACE INTO scan_settings (key, value) VALUES ('last_master_scan', ?)").run(failedAt);
         throw error;
@@ -2142,7 +2348,7 @@ async function executeIncrementalPoolScan(trigger = 'manual quick scan') {
         let skippedFiles = 0;
 
         for (let i = 0; i < files.length; i++) {
-            const filePath = path.resolve(files[i]);
+            const filePath = normalizeFilesystemPath(files[i]);
             const key = pathKey(filePath);
             seenKeys.add(key);
             let stat;
@@ -2169,9 +2375,14 @@ async function executeIncrementalPoolScan(trigger = 'manual quick scan') {
                 }
                 if (oldRecord) changedFiles++;
                 else newFiles++;
-            } else if (Number(tags._organizer_metadata_version) !== 6 && (!tags.title || !(tags.artist || tags.albumartist))) {
+            } else if (Number(tags._organizer_metadata_version) !== 7) {
 
-                try { tags = await organizer.readTags(filePath); } catch (_) {}
+                try {
+                    const refreshed = await organizer.indexPoolFile(filePath, {}, '', false);
+                    tags = refreshed.tags || tags;
+                } catch (_) {
+                    try { tags = await organizer.readTags(filePath); } catch (_) {}
+                }
             }
 
             if (statChanged || !catalogRow || !tags.title || !(tags.artist || tags.albumartist)) {
@@ -2201,7 +2412,7 @@ async function executeIncrementalPoolScan(trigger = 'manual quick scan') {
         const staleRecords = records.filter(row => !seenKeys.has(pathKey(row.file_path))
             && !inaccessiblePoolDirectories.some(directory => pathSameOrInside(row.file_path, directory)));
         const deleteRecord = organizer.db.prepare("DELETE FROM file_records WHERE file_path = ? AND source_type = 'pool'");
-        const deleteStale = organizer.db.transaction(rows => { for (const row of rows) deleteRecord.run(path.resolve(row.file_path)); });
+        const deleteStale = organizer.db.transaction(rows => { for (const row of rows) deleteRecord.run(normalizeFilesystemPath(row.file_path)); });
         deleteStale(staleRecords);
 
         activeScanJob.message = 'Checking and recovering catalog paths for moved/upgraded songs...';
@@ -2360,6 +2571,7 @@ app.put('/api/admin/users/:user_id', requireLogin, (req, res) => {
             progress: 0, total: 0, message: `Preparing to move ${targetUser.username}'s library links...`, result: null,
             newPath, newMode: selectedMode, newRole: selectedRole, username: String(username || targetUser.username).trim(), passwordHash
         };
+        startStandaloneTaskHistory(activeLibraryPathJob, req.user, 'User Library Path Migration', `Library path migration for ${targetUser.username}`);
         res.json({ success: true, task: 'library-path-migration', message: `Started moving ${targetUser.username}'s library to the new path.` });
         setImmediate(() => runLibraryPathMigration(activeLibraryPathJob));
         return;
@@ -2394,6 +2606,7 @@ app.delete('/api/admin/users/:user_id', requireLogin, (req, res) => {
     if (!target) return res.status(404).json({ success: false, message: 'User not found.' });
     activeLibraryPathJob = { status: 'running', task: 'user-delete', targetUserId: targetId, startedAt: Date.now(), dismissed: false, progress: 0, total: 0,
         message: `Preparing to remove managed library links for ${target.username}...`, result: null };
+    startStandaloneTaskHistory(activeLibraryPathJob, req.user, 'User Deletion and Link Cleanup', `Delete user ${target.username}`);
     res.json({ success: true, task: 'user-delete', message: `Started deleting ${target.username} and cleaning up assigned song links.` });
     setImmediate(() => runUserDeletionJob(activeLibraryPathJob));
 });
@@ -2451,7 +2664,7 @@ app.post('/api/admin/wanted-tracks/settings', requireLogin, (req, res) => {
 
     saveWantedTracksSetting('wanted_tracks_mode', mode);
     saveWantedTracksSetting('wanted_tracks_post_url', postUrl);
-    res.json({ success: true, message: 'Wanted Tracks settings saved.', mode, post_url: postUrl, file_path: WANTED_TRACKS_FILE });
+    res.json({ success: true, message: 'Wanted Tracks settings saved.', mode, post_url: postUrl, file_path: displayFilesystemPath(WANTED_TRACKS_FILE) });
 });
 
 app.post('/api/admin/wanted-tracks/generate', requireLogin, async (req, res) => {
@@ -2591,6 +2804,7 @@ app.post('/api/admin/dead-files/repair/bulk', requireLogin, (req, res) => {
     if (items.length > 10000) return res.status(400).json({ success: false, message: 'A single repair run is limited to 10,000 catalog entries.' });
     activeDeadFileJob = { status: 'running', task: 'dead-files-repair', progress: 0, total: items.length,
         message: `Preparing replacement matches for ${items.length} selected catalog entr${items.length === 1 ? 'y' : 'ies'}...`, result: null, startedAt: Date.now(), dismissed: false };
+    startStandaloneTaskHistory(activeDeadFileJob, req.user, 'Dead Files — Repair Selected', 'Dead Files repair');
     res.json({ success: true, total: items.length, message: `Started catalog repair for ${items.length} entr${items.length === 1 ? 'y' : 'ies'}.` });
     setImmediate(() => runDeadFileRepairJob(items));
 });
@@ -2603,6 +2817,7 @@ app.post('/api/admin/dead-files/purge', requireLogin, (req, res) => {
     }
     activeDeadFileJob = { status: 'running', task: 'dead-files-purge', progress: 0, total: 0,
         message: 'Preparing to check catalog paths...', result: null, startedAt: Date.now(), dismissed: false };
+    startStandaloneTaskHistory(activeDeadFileJob, req.user, 'Dead Files — Scan and Purge', 'Dead Files purge');
     res.json({ success: true, message: 'Started the Dead Files catalog check.' });
     setImmediate(() => runDeadFilesPurgeJob());
 });
@@ -2616,14 +2831,14 @@ app.get('/api/admin/dead-files', requireLogin, async (req, res) => {
 app.post('/api/admin/dead-files/:id/repair', requireLogin, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ success: false, message: 'Unauthorized' });
     const deadId = Number.parseInt(req.params.id, 10);
-    const newPath = path.resolve(String(req.body.replacement_path || ''));
+    const newPath = normalizeFilesystemPath(String(req.body.replacement_path || ''));
     const deadRow = db.prepare('SELECT id, file_path, title, artist, album FROM catalog WHERE id = ?').get(deadId);
     if (!deadRow || fs.existsSync(deadRow.file_path)) return res.status(400).json({ success: false, message: 'This catalog entry is not a dead file anymore.' });
     if (!isLiveCatalogPoolPath(newPath)) return res.status(400).json({ success: false, message: 'The replacement must be an existing audio file inside the indexed Master Pool, outside dump, exempt, and Trash folders.' });
     try {
         const live = await getDeadFileCandidateRows([deadRow]);
         const matches = deadRowMatchOptions(deadRow, buildDeadCandidateTitleIndex(live), getExemptPaths());
-        const approvedCandidate = matches.find(item => path.resolve(item.file_path) === newPath);
+        const approvedCandidate = matches.find(item => normalizeFilesystemPath(item.file_path) === newPath);
         if (!approvedCandidate) return res.status(400).json({ success: false, message: 'The replacement file does not have matching embedded title and artist metadata.' });
         const replacement = approvedCandidate;
         const tags = replacement.embedded || {};
@@ -2709,7 +2924,7 @@ app.post('/api/admin/organizer/run', requireLogin, (req, res) => {
         return res.status(409).json({ success: false, message: 'Organizer is already running.' });
     }
     res.json({ success: true, message: 'Organizer started.' });
-    runOrganizerPipeline('manual').catch(error => console.error('[Organizer] Manual run failed:', error.message));
+    runOrganizerPipeline('manual', req.user).catch(error => console.error('[Organizer] Manual run failed:', error.message));
 });
 
 app.post('/api/admin/organizer/review/bulk', requireLogin, async (req, res) => {
@@ -2738,9 +2953,11 @@ app.post('/api/admin/organizer/review/bulk', requireLogin, async (req, res) => {
     if (!ids.length) return res.status(400).json({ success: false, message: 'Select at least one pending review item first.' });
     if (ids.length > 20000) return res.status(400).json({ success: false, message: 'Bulk review is limited to 20,000 items per run.' });
     activeOrganizerJob = { status: 'running', task: 'bulk-review', progress: 0, total: ids.length, message: `Starting bulk review (${action})...`, result: null, startedAt: Date.now(), dismissed: false };
+    startStandaloneTaskHistory(activeOrganizerJob, req.user, 'Organizer Review — Bulk Action', `Organizer review: ${action}`);
     res.json({ success: true, message: `Started bulk review for ${ids.length} items.`, total: ids.length });
     runOrganizerBulkReview(ids, action).catch(error => {
-        activeOrganizerJob = { status: 'error', task: 'bulk-review', progress: activeOrganizerJob.progress, total: activeOrganizerJob.total, message: error.message, result: null, startedAt: activeOrganizerJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false };
+        activeOrganizerJob = { ...activeOrganizerJob, status: 'error', task: 'bulk-review', progress: activeOrganizerJob.progress, total: activeOrganizerJob.total, message: error.message, errorTrace: error.stack || error.message, result: null, startedAt: activeOrganizerJob.startedAt || Date.now(), completedAt: Date.now(), dismissed: false };
+        persistStandaloneTaskHistory(activeOrganizerJob);
         console.error('[Organizer] Bulk review failed:', error.message);
     });
 });
@@ -2910,7 +3127,7 @@ app.get('/api/catalog', requireLogin, (req, res) => {
     const durationByPath = new Map();
     const filePaths = [...new Set(visibleRows.map(row => String(row.file_path || '')).filter(Boolean))];
     const normalizeCatalogPath = value => {
-        const resolved = path.resolve(value);
+        const resolved = normalizeFilesystemPath(value);
         return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
     };
     for (let i = 0; i < filePaths.length; i += 400) {
@@ -2990,7 +3207,7 @@ let activeLibraryPathJob = { status: 'idle', task: '', progress: 0, total: 0, me
 
 function cleanupEmptyLibraryDirectories(linkPath, libraryRoot) {
     let currentDir = path.dirname(linkPath);
-    const root = path.resolve(libraryRoot);
+    const root = normalizeFilesystemPath(libraryRoot);
     while (currentDir && !sameResolvedPath(currentDir, root) && pathSameOrInside(currentDir, root)) {
         try { fs.rmdirSync(currentDir); currentDir = path.dirname(currentDir); }
         catch (_) { break; }
@@ -3067,8 +3284,10 @@ async function runLibraryPathMigration(job) {
         job.status = 'error';
         job.completedAt = Date.now();
         job.message = error.message || 'Could not move the user library to the new path.';
+        job.errorTrace = error.stack || error.message;
         job.result = { moved: 0, failed: 1, track_id: error.trackId || null };
     }
+    persistStandaloneTaskHistory(job);
 }
 
 async function runUserDeletionJob(job) {
@@ -3214,8 +3433,11 @@ function addQueuedWorkTask(details) {
         priority: Number(details.priority) || 0,
         scanType: details.scanType || '',
         trigger: details.trigger || '',
+        triggerSource: details.scheduled === true ? 'scheduled cron' : 'manual',
+        username: String(details.username || details.payload?.user?.username || details.requestedByUsername || ''),
         payload: details.payload || null,
         status: 'queued',
+        errorTrace: '',
         progress: 0,
         total: 0,
         message: 'Waiting in queue...',
@@ -3226,6 +3448,7 @@ function addQueuedWorkTask(details) {
         error: null
     };
     queuedWorkTasks.set(task.id, task);
+    saveBackgroundTaskHistory(task);
     queuedWorkOrder.push(task.id);
     queuedWorkOrder.sort((leftId, rightId) => {
         const left = queuedWorkTasks.get(leftId);
@@ -3250,6 +3473,7 @@ function enqueueCatalogScan(scanType, trigger, options = {}) {
         if (currentActive.scanType === 'full' || requestedType === 'incremental') {
 
             if (options.scheduled !== true) currentActive.scheduled = false;
+            saveBackgroundTaskHistory(currentActive);
             return { task: currentActive, existing: true, coveredByFull: currentActive.scanType === 'full' && !isFull };
         }
     }
@@ -3260,6 +3484,7 @@ function enqueueCatalogScan(scanType, trigger, options = {}) {
     if (pendingScan) {
         if (options.scheduled !== true) pendingScan.scheduled = false;
         if (pendingScan.scanType === 'full' || requestedType === 'incremental') {
+            saveBackgroundTaskHistory(pendingScan);
             return { task: pendingScan, existing: true, coveredByFull: pendingScan.scanType === 'full' && !isFull };
         }
 
@@ -3284,6 +3509,7 @@ function enqueueCatalogScan(scanType, trigger, options = {}) {
             activeScanJob.message = pendingScan.message;
         }
         refreshQueuedWorkPositions();
+        saveBackgroundTaskHistory(pendingScan);
         return { task: pendingScan, existing: true, upgraded: true };
     }
 
@@ -3318,6 +3544,8 @@ function enqueueUserSync(user, sourceType, inputData, options = {}, details = {}
         kind: 'sync', label, userId, requestedByUserId: details.requestedByUserId == null ? userId : details.requestedByUserId,
         requestedByUsername: details.requestedByUsername || user.username || '', scheduled: isScheduled,
         dedupeKey: details.dedupeKey || '', priority: Number(details.priority) || 0,
+        trigger: details.trigger || (isScheduled ? 'scheduled playlist sync' : 'manual playlist sync/import'),
+        username: user.username || String(userId),
         payload: { user, sourceType, inputData, options: { autoApply: options.autoApply === true, includeTextPlaylist: options.includeTextPlaylist === true } }
     });
     if (queued.existing) return { ...queued, userAlreadyBusy: true };
@@ -3346,6 +3574,7 @@ function syncQueueTaskFromScan(task) {
     task.total = Number(scan.total) || 0;
     task.message = scan.message || task.message;
     task.error = scan.status === 'error' ? scan.message : null;
+    if (scan.status === 'error') task.errorTrace = scan.errorTrace || scan.message || '';
     task.result = scan.result || task.result;
     if (['completed', 'error', 'cancelled'].includes(scan.status)) task.status = scan.status;
     else if (['running', 'fetching', 'processing'].includes(scan.status)) task.status = 'running';
@@ -3380,15 +3609,19 @@ async function executeQueuedSyncTask(task) {
         await processSyncJob(user, payload.sourceType, payload.inputData, payload.options || {});
         task.status = job.status;
         task.result = job.result || null;
+        task.error = job.error || null;
+        if (job.status === 'error') task.errorTrace = job.errorTrace || job.error || job.message || '';
         task.message = job.message || (job.status === 'auto_completed' ? 'Sync completed and changes were applied.' : 'Import results are ready for review.');
     } catch (error) {
         job.status = 'error';
         job.error = error.message;
+        job.errorTrace = error.stack || error.message;
         job.message = error.message;
         job.completedAt = Date.now();
         job.applied = false;
         task.status = 'error';
         task.error = error.message;
+        task.errorTrace = error.stack || error.message;
         task.message = error.message;
     } finally {
         clearInterval(mirror);
@@ -3425,18 +3658,20 @@ async function executeQueuedScanTask(task) {
     } catch (error) {
         task.status = 'error';
         task.error = error.message;
+        task.errorTrace = error.stack || error.message;
         task.message = error.message;
         if (!['completed', 'error'].includes(activeScanJob.status)) {
             activeScanJob = {
                 status: 'error', type: task.scanType, trigger: task.trigger,
                 progress: task.progress || 0, total: task.total || 0,
-                message: error.message, queueId: task.id,
+                message: error.message, errorTrace: error.stack || error.message, queueId: task.id,
                 startedAt: task.startedAt || Date.now(), completedAt: Date.now(), dismissed: false
             };
         }
     } finally {
         clearInterval(mirror);
         syncQueueTaskFromScan(task);
+        if (task.status === 'error' && !task.errorTrace) task.errorTrace = activeScanJob.errorTrace || task.error || task.message || '';
         if (task.status === 'running' || task.status === 'queued') task.status = activeScanJob.status === 'error' ? 'error' : 'completed';
         task.completedAt = Date.now();
     }
@@ -3456,6 +3691,7 @@ async function drainQueuedWork() {
             task.startedAt = Date.now();
             task.position = 1;
             task.message = `Starting ${task.label}...`;
+            saveBackgroundTaskHistory(task);
             if (task.kind === 'sync') {
                 const job = activeJobs[task.userId];
                 if (job && job.queueId === task.id) {
@@ -3473,12 +3709,14 @@ async function drainQueuedWork() {
             } catch (error) {
                 task.status = 'error';
                 task.error = error.message;
+                task.errorTrace = error.stack || error.message;
                 task.message = error.message;
                 task.completedAt = Date.now();
                 console.error(`[Queue] ${task.label} failed:`, error.message);
             }
             if (task.status === 'running' || task.status === 'queued') task.status = 'completed';
             if (!task.completedAt) task.completedAt = Date.now();
+            saveBackgroundTaskHistory(task);
             if (task.kind === 'sync') {
                 const job = activeJobs[task.userId];
                 if (job && job.queueId === task.id) {
@@ -3565,6 +3803,291 @@ function getQueueTasksForViewer(viewer) {
     return ordered.map(task => queueTaskSnapshot(task, viewer, getQueueTaskPosition(task.id)));
 }
 
+const POOL_STORAGE_CACHE_MS = 60 * 1000;
+let poolStorageAnalysis = {
+    status: 'idle', startedAt: null, calculatedAt: null, progress: 0, total: 0,
+    phase: '', message: 'Storage analysis has not run yet.', totalBytes: 0,
+    totalTracks: 0, missingMetadata: 0, errors: 0, formats: [], topArtists: [],
+    userLinks: [], totalAssignedLinks: 0, validLinks: 0, brokenLinks: 0
+};
+let poolStorageAnalysisPromise = null;
+
+function poolAudioFormatLabel(filePath, tags = {}) {
+    const extension = path.extname(filePath || '').slice(1).toLowerCase();
+    const codec = String(tags._codec || '').toLowerCase();
+    const bitDepth = Number(tags._bits_per_sample || tags._bit_depth) || 0;
+    if (extension === 'flac' || codec.includes('flac')) {
+        return bitDepth === 24 ? 'FLAC 24-bit' : bitDepth === 16 ? 'FLAC 16-bit' : bitDepth ? `FLAC ${bitDepth}-bit` : 'FLAC (bit depth unknown)';
+    }
+    if (extension === 'm4a' && (codec.includes('alac') || /apple lossless/.test(codec))) return 'ALAC';
+    if (extension === 'alac' || codec.includes('alac')) return 'ALAC';
+    if (extension === 'mp3' || codec.includes('mpeg layer 3')) return 'MP3';
+    if (extension === 'opus' || codec.includes('opus')) return 'Opus';
+    if (extension === 'ogg' && (codec.includes('vorbis') || codec.includes('ogg'))) return codec.includes('vorbis') ? 'Ogg Vorbis' : 'OGG';
+    if (extension === 'ogg') return 'OGG';
+    if (extension === 'aac' || codec.includes('aac')) return 'AAC';
+    if (extension === 'm4a') return 'M4A (codec unknown)';
+    if (extension === 'wav' || codec.includes('pcm')) return 'WAV / PCM';
+    if (extension === 'aiff' || extension === 'aif') return 'AIFF';
+    if (extension === 'wma' || codec.includes('windows media')) return 'WMA';
+    return extension ? extension.toUpperCase() : 'Unknown format';
+}
+
+function getUpcomingScheduledWork(nowMs = Date.now()) {
+    const nowSeconds = nowMs / 1000;
+    const readSetting = key => Number.parseFloat(db.prepare('SELECT value FROM scan_settings WHERE key = ?').get(key)?.value || 0) || 0;
+    const upcoming = [];
+    const masterInterval = normalizeIntervalToSchedule(readSetting('master_scan_interval'), MASTER_SCAN_SCHEDULES);
+    const incrementalInterval = normalizeIntervalToSchedule(readSetting('incremental_scan_interval'), INCREMENTAL_SCAN_SCHEDULES);
+    const lastFull = readSetting('last_master_scan');
+    const lastQuick = readSetting('last_incremental_scan');
+    if (masterInterval > 0) upcoming.push({
+        id: 'scheduled-full-scan', type: 'scan', label: 'Detailed Full Scan + Organizer',
+        intervalMinutes: masterInterval, lastRunAt: lastFull ? lastFull * 1000 : null,
+        nextRunAt: Math.max(nowSeconds, lastFull > 0 ? lastFull + masterInterval * 60 : nowSeconds) * 1000,
+        triggerSource: 'scheduled cron'
+    });
+    if (incrementalInterval > 0) upcoming.push({
+        id: 'scheduled-quick-scan', type: 'scan', label: 'Quick Scan',
+        intervalMinutes: incrementalInterval, lastRunAt: lastQuick ? lastQuick * 1000 : null,
+        nextRunAt: Math.max(nowSeconds, lastQuick > 0 ? lastQuick + incrementalInterval * 60 : nowSeconds) * 1000,
+        triggerSource: 'scheduled cron'
+    });
+    const users = db.prepare('SELECT id, username, auto_sync, sync_interval, last_sync, sync_provider, sync_url FROM users WHERE auto_sync = 1 AND sync_interval > 0').all();
+    for (const user of users) {
+        const interval = normalizeIntervalToSchedule(user.sync_interval, USER_SYNC_SCHEDULES);
+        if (!interval) continue;
+        const providerConfigured = ['spotify', 'youtube', 'apple'].includes(user.sync_provider) && String(user.sync_url || '').trim();
+        const hasTextPlaylist = !!db.prepare('SELECT 1 FROM user_text_playlist WHERE user_id = ? LIMIT 1').get(user.id);
+        if (!providerConfigured && !hasTextPlaylist) continue;
+        const last = Number(user.last_sync) || 0;
+        upcoming.push({
+            id: `scheduled-sync-${user.id}`, type: 'sync', userId: Number(user.id),
+            username: user.username, label: `Playlist Sync — ${user.username}`,
+            intervalMinutes: interval, lastRunAt: last > 0 ? last * 1000 : null,
+            nextRunAt: Math.max(nowSeconds, last > 0 ? last + interval * 60 : nowSeconds) * 1000,
+            triggerSource: 'scheduled cron'
+        });
+    }
+    return upcoming.sort((a, b) => a.nextRunAt - b.nextRunAt);
+}
+
+async function buildPoolStorageAnalysis() {
+    const startedAt = Date.now();
+    try {
+        const poolRoot = normalizeFilesystemPath(MASTER_POOL_DIR);
+        const exemptPaths = getExemptPaths();
+        const catalogRows = db.prepare('SELECT id, file_path, title, artist, album FROM catalog ORDER BY id').all();
+        const catalogByPath = new Map(catalogRows.map(row => [normalizedPathKey(row.file_path), row]));
+        const liveTrackIds = new Set();
+        const sizeByTrackId = new Map();
+        const formats = new Map();
+        const artists = new Map();
+        const users = db.prepare('SELECT id, username, role, library_path, index_mode FROM users ORDER BY username COLLATE NOCASE').all();
+        const linkStats = new Map(users.map(user => [Number(user.id), {
+            userId: Number(user.id), username: user.username, role: user.role,
+            indexMode: user.index_mode || 'standard', totalLinks: 0,
+            validLinks: 0, brokenLinks: 0, assignedBytes: 0
+        }]));
+        let totalBytes = 0;
+        let validTrackCount = 0;
+        let missingMetadata = 0;
+        let errors = 0;
+
+        poolStorageAnalysis = {
+            ...poolStorageAnalysis, status: 'building', startedAt, calculatedAt: null,
+            progress: 0, total: 0, phase: 'enumerate', message: 'Enumerating audio files in the actual Master Pool…',
+            totalBytes: 0, totalTracks: 0, missingMetadata: 0, errors: 0,
+            formats: [], topArtists: [], userLinks: [], totalAssignedLinks: 0, validLinks: 0, brokenLinks: 0
+        };
+        const poolFiles = await walkDir(poolRoot, exemptPaths, progress => {
+            poolStorageAnalysis.progress = Number(progress.discoveredAudioFiles) || 0;
+            poolStorageAnalysis.message = `Enumerating Master Pool audio files… ${poolStorageAnalysis.progress.toLocaleString()} discovered`;
+        });
+        const uniquePoolFiles = [...new Map(poolFiles.map(file => [normalizedPathKey(file), normalizeFilesystemPath(file)])).values()];
+        poolStorageAnalysis.phase = 'audio';
+        poolStorageAnalysis.progress = 0;
+        poolStorageAnalysis.total = uniquePoolFiles.length;
+        poolStorageAnalysis.message = 'Measuring live audio files and reading codec, bitrate, bit-depth, and artist metadata…';
+
+        const indexedOrganizerPaths = new Set(organizer.db.prepare("SELECT file_path FROM file_records WHERE source_type = 'pool'").all()
+            .map(row => normalizedPathKey(row.file_path)));
+
+        for (let i = 0; i < uniquePoolFiles.length; i++) {
+            const sourcePath = uniquePoolFiles[i];
+            try {
+                const stat = await fs.promises.stat(sourcePath);
+                if (!stat.isFile()) {
+                    poolStorageAnalysis.progress = i + 1;
+                    continue;
+                }
+                const key = normalizedPathKey(sourcePath);
+                const catalogRow = catalogByPath.get(key) || null;
+                let tags = {};
+                try {
+                    tags = indexedOrganizerPaths.has(key)
+                        ? (await organizer.getEmbeddedMetadataForPath(sourcePath) || {})
+                        : (await organizer.readTags(sourcePath) || {});
+                } catch (_) { tags = {}; }
+                if (!tags.title && !tags.artist && !tags._codec && !Number(tags.duration)) missingMetadata++;
+
+                const label = poolAudioFormatLabel(sourcePath, tags);
+                const bitrate = Number(tags._bitrate) > 0 ? Number(tags._bitrate)
+                    : (Number(tags.duration) > 0 ? (stat.size * 8 / Number(tags.duration) / 1000) : 0);
+                if (!formats.has(label)) formats.set(label, { name: label, trackCount: 0, bytes: 0, bitrateSum: 0, bitrateCount: 0 });
+                const group = formats.get(label);
+                group.trackCount++;
+                group.bytes += stat.size;
+                if (Number.isFinite(bitrate) && bitrate > 0) { group.bitrateSum += bitrate; group.bitrateCount++; }
+                totalBytes += stat.size;
+                validTrackCount++;
+
+                if (catalogRow) {
+                    liveTrackIds.add(Number(catalogRow.id));
+                    sizeByTrackId.set(Number(catalogRow.id), stat.size);
+                }
+                const artistLabel = String(tags.albumartist || tags.artist || catalogRow?.artist || 'Unknown Artist').trim() || 'Unknown Artist';
+                const artistKey = artistLabel.normalize('NFKC').toLocaleLowerCase();
+                if (!artists.has(artistKey)) artists.set(artistKey, { artist: artistLabel, trackCount: 0, bytes: 0 });
+                const artist = artists.get(artistKey);
+                artist.trackCount++;
+                artist.bytes += stat.size;
+            } catch (error) {
+                if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') errors++;
+            }
+            poolStorageAnalysis.progress = i + 1;
+            if (i % 50 === 0) await new Promise(resolve => setImmediate(resolve));
+        }
+
+        poolStorageAnalysis.phase = 'links';
+        poolStorageAnalysis.progress = 0;
+        const linkRows = db.prepare(`SELECT ut.user_id, c.id AS track_id, c.file_path
+            FROM user_tracks ut JOIN catalog c ON c.id = ut.track_id ORDER BY ut.user_id, c.id`).all();
+        poolStorageAnalysis.total = linkRows.length;
+        poolStorageAnalysis.message = 'Checking user-library link assignments against the current Master Pool files…';
+        const userById = new Map(users.map(user => [Number(user.id), user]));
+        for (let i = 0; i < linkRows.length; i++) {
+            const row = linkRows[i];
+            const stats = linkStats.get(Number(row.user_id));
+            if (!stats) continue;
+            stats.totalLinks++;
+            try {
+                const sourcePath = normalizeFilesystemPath(row.file_path);
+                const sourceAvailable = liveTrackIds.has(Number(row.track_id)) && fs.existsSync(sourcePath);
+                if (sourceAvailable) stats.assignedBytes += sizeByTrackId.get(Number(row.track_id)) || 0;
+                const user = userById.get(Number(row.user_id));
+                const targetPath = libraryLinkPathForPoolFile(user.library_path, sourcePath);
+                if (sourceAvailable && pathEntryExists(targetPath) && sameFileOnDisk(targetPath, sourcePath)) stats.validLinks++;
+                else stats.brokenLinks++;
+            } catch (_) {
+                stats.brokenLinks++;
+            }
+            poolStorageAnalysis.progress = i + 1;
+            if (i % 250 === 0) await new Promise(resolve => setImmediate(resolve));
+        }
+
+        const formatRows = [...formats.values()].map(item => ({
+            name: item.name, trackCount: item.trackCount, bytes: item.bytes,
+            averageBitrateKbps: item.bitrateCount ? Math.round(item.bitrateSum / item.bitrateCount) : null,
+            tracksWithBitrate: item.bitrateCount
+        })).sort((a, b) => b.bytes - a.bytes);
+        const artistRows = [...artists.values()].sort((a, b) => b.bytes - a.bytes).slice(0, 10);
+        const usersRows = [...linkStats.values()].sort((a, b) => b.totalLinks - a.totalLinks || a.username.localeCompare(b.username));
+        const totals = usersRows.reduce((acc, user) => ({
+            assigned: acc.assigned + user.totalLinks,
+            valid: acc.valid + user.validLinks,
+            broken: acc.broken + user.brokenLinks
+        }), { assigned: 0, valid: 0, broken: 0 });
+        poolStorageAnalysis = {
+            status: 'ready', startedAt, calculatedAt: Date.now(), progress: linkRows.length,
+            total: linkRows.length, phase: 'complete', message: `Measured ${validTrackCount.toLocaleString()} audio file(s) currently present in the Master Pool.`,
+            totalBytes, totalTracks: validTrackCount, missingMetadata, errors,
+            formats: formatRows, topArtists: artistRows, userLinks: usersRows,
+            totalAssignedLinks: totals.assigned, validLinks: totals.valid, brokenLinks: totals.broken
+        };
+    } catch (error) {
+        poolStorageAnalysis = {
+            ...poolStorageAnalysis, status: 'error', calculatedAt: Date.now(),
+            message: error.message || 'Storage analysis failed.', errorTrace: error.stack || error.message
+        };
+    } finally {
+        poolStorageAnalysisPromise = null;
+    }
+}
+
+function startPoolStorageAnalysis(force = false) {
+    if (poolStorageAnalysisPromise) return;
+    if (!force && poolStorageAnalysis.status === 'ready' && Date.now() - Number(poolStorageAnalysis.calculatedAt || 0) < POOL_STORAGE_CACHE_MS) return;
+    poolStorageAnalysis = {
+        ...poolStorageAnalysis, status: 'building', startedAt: Date.now(), calculatedAt: null,
+        progress: 0, total: 0, phase: 'starting', message: 'Starting pool storage analysis…', errorTrace: ''
+    };
+    poolStorageAnalysisPromise = new Promise(resolve => setImmediate(resolve)).then(buildPoolStorageAnalysis);
+}
+
+function getBackgroundTaskHistory(limit = 75) {
+    return db.prepare(`SELECT task_id AS id, kind, task_type AS type, label, user_id AS userId,
+            username, requested_by AS requestedBy, trigger_source AS triggerSource,
+            trigger_detail AS triggerDetail, status, created_at AS createdAt,
+            started_at AS startedAt, completed_at AS completedAt, duration_ms AS durationMs,
+            message, error_trace AS errorTrace, result_summary AS resultSummary
+        FROM background_task_history WHERE status IN ('completed', 'error', 'cancelled')
+        ORDER BY COALESCE(completed_at, created_at) DESC, created_at DESC LIMIT ?`).all(Math.max(1, Math.min(200, Number(limit) || 75)));
+}
+
+function getPoolMaintenanceActiveTasks(viewer) {
+    const tasks = getQueueTasksForViewer(viewer);
+    const queueIds = new Set(tasks.map(task => String(task.id)));
+    const existingIds = new Set(tasks.map(task => String(task.id)));
+    const addStandalone = (job, kind, label, uniqueKey = '') => {
+        if (!job || !['running', 'fetching', 'queued'].includes(String(job.status || ''))) return;
+        if (job.queueId && queueIds.has(String(job.queueId))) return;
+        const id = String(job.historyTaskId || `${kind}:${uniqueKey || job.task || label}`);
+        if (existingIds.has(id)) return;
+        existingIds.add(id);
+        tasks.push({
+            id, kind, type: job.task || kind, label: label || job.historyLabel || job.task || kind,
+            status: job.status, message: job.message || '',
+            progress: Number(job.progress) || 0, total: Number(job.total) || 0,
+            position: 0, createdAt: Number(job.historyCreatedAt || job.startedAt || job.createdAt) || Date.now(),
+            startedAt: Number(job.startedAt) || null,
+            triggerSource: job.scheduled ? 'scheduled cron' : 'manual',
+            trigger: job.historyTriggerDetail || job.trigger || '',
+            scheduled: job.scheduled === true
+        });
+    };
+
+    addStandalone(activeScanJob, 'scan', activeScanJob.type === 'incremental' ? 'Quick Scan' : 'Detailed Full Scan');
+    if (!activeOrganizerJob.nestedInScan) addStandalone(activeOrganizerJob, 'organizer', 'Organizer Processing');
+    addStandalone(activeDeadFileJob, 'maintenance', activeDeadFileJob.historyLabel || 'Dead Files Maintenance');
+    addStandalone(activeLibraryPathJob, 'maintenance', activeLibraryPathJob.historyLabel || 'User Library Maintenance');
+    for (const [userId, job] of activeMissingLogJobs.entries()) {
+        addStandalone(job, 'user-maintenance', job.historyLabel || `Unmatched Logs Batch — ${job.historyRequestedByUsername || `User ${userId}`}`, userId);
+    }
+    for (const [userId, job] of activeRestoreJobs.entries()) {
+        addStandalone(job, 'user-maintenance', job.historyLabel || `Restore Tracks — ${job.historyRequestedByUsername || `User ${userId}`}`, userId);
+    }
+    return tasks.sort((a, b) => {
+        const rank = status => status === 'running' ? 0 : status === 'fetching' ? 1 : 2;
+        return rank(a.status) - rank(b.status) || Number(a.createdAt || 0) - Number(b.createdAt || 0);
+    });
+}
+
+app.get('/api/admin/pool-maintenance/overview', requireLogin, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ success: false, message: 'Administrator access required.' });
+    res.set('Cache-Control', 'no-store');
+    startPoolStorageAnalysis(req.query.refresh === '1');
+    res.json({
+        success: true,
+        generatedAt: Date.now(),
+        masterPoolPath: displayFilesystemPath(MASTER_POOL_DIR),
+        activeTasks: getPoolMaintenanceActiveTasks(req.user),
+        upcoming: getUpcomingScheduledWork(),
+        history: getBackgroundTaskHistory(100),
+        storage: poolStorageAnalysis
+    });
+});
+
 app.get('/api/job-queue', requireLogin, (req, res) => {
     res.set('Cache-Control', 'no-store');
     res.json({ success: true, tasks: getQueueTasksForViewer(req.user) });
@@ -3594,6 +4117,8 @@ app.post('/api/job-queue/:id/cancel', requireLogin, (req, res) => {
     task.completedAt = Date.now();
     task.message = 'Removed from the queue before it started.';
     task.error = null;
+    task.errorTrace = '';
+    saveBackgroundTaskHistory(task);
     const pendingIndex = queuedWorkOrder.indexOf(task.id);
     if (pendingIndex >= 0) queuedWorkOrder.splice(pendingIndex, 1);
     if (task.kind === 'sync') {
@@ -3997,6 +4522,8 @@ async function runRestoreTracksJob(user, trackIds, job) {
     } finally {
         invalidateLiveCatalogSnapshot();
         lastLibraryLinkReconcileAt.delete(Number(user.id));
+        if (errors.length) job.errorTrace = errors.map(item => `Track ${item.track_id}: ${item.message}`).join('\n');
+        persistStandaloneTaskHistory(job);
     }
 }
 
@@ -4028,21 +4555,24 @@ async function runMissingLogBulkJob(user, items, job) {
             job.progress = i + 1;
             if (i % 2 === 0) await new Promise(resolve => setImmediate(resolve));
         }
-        job.status = 'completed';
+        job.status = errors.length === items.length && errors.length ? 'error' : 'completed';
         job.completedAt = Date.now();
         job.progress = items.length;
         job.total = items.length;
         job.message = `Unmatched-log batch finished: ${linked} linked${errors.length ? `, ${errors.length} need attention` : ''}.`;
+        job.errorTrace = errors.length ? errors.map(item => `Log ${item.log_id}, track ${item.track_id}: ${item.message}`).join('\n') : '';
         job.result = { linked, added, failed: errors.length, errors: errors.slice(0, 50) };
         queueWantedTracksRefresh('unmatched-log resolution');
     } catch (error) {
         job.status = 'error';
         job.completedAt = Date.now();
         job.message = error.message;
+        job.errorTrace = error.stack || error.message;
         job.result = { linked, added, failed: errors.length, errors: errors.slice(0, 50) };
     }
     invalidateLiveCatalogSnapshot();
     lastLibraryLinkReconcileAt.clear();
+    persistStandaloneTaskHistory(job);
 }
 
 async function runMissingLogSkipJob(userId, items, job) {
@@ -4067,13 +4597,15 @@ async function runMissingLogSkipJob(userId, items, job) {
         job.progress = i + 1;
         if (i % 25 === 0) await new Promise(resolve => setImmediate(resolve));
     }
-    job.status = errors.length === items.length ? 'error' : 'completed';
+    job.status = errors.length === items.length && errors.length ? 'error' : 'completed';
     job.completedAt = Date.now();
     job.progress = items.length;
     job.total = items.length;
     job.message = `Unmatched-log skip finished: ${skipped} skipped${errors.length ? `, ${errors.length} need attention` : ''}.`;
+    job.errorTrace = errors.length ? errors.map(item => `Log ${item.log_id}: ${item.message}`).join('\n') : '';
     job.result = { skipped, failed: errors.length, errors: errors.slice(0, 100) };
     queueWantedTracksRefresh('unmatched-log skip');
+    persistStandaloneTaskHistory(job);
 }
 
 app.post('/api/user/missing-logs/resolve/bulk', requireLogin, (req, res) => {
@@ -4093,6 +4625,7 @@ app.post('/api/user/missing-logs/resolve/bulk', requireLogin, (req, res) => {
     if (items.length > 5000) return res.status(400).json({ success: false, message: 'A single unmatched-log batch is limited to 5,000 choices.' });
     const job = { status: 'running', task: 'missing-logs-bulk', progress: 0, total: items.length,
         message: `Starting unmatched-log batch (${items.length} choice${items.length === 1 ? '' : 's'})...`, result: null, startedAt: Date.now(), dismissed: false };
+    startStandaloneTaskHistory(job, req.user, 'Unmatched Logs — Link Selected', 'Unmatched Logs bulk link');
     activeMissingLogJobs.set(req.user.id, job);
     const user = { id: req.user.id, username: req.user.username, library_path: req.user.library_path, index_mode: req.user.index_mode || 'standard' };
     res.json({ success: true, total: items.length, message: `Started linking ${items.length} selected unmatched track(s).` });
@@ -4144,6 +4677,7 @@ app.post('/api/user/missing-logs/skip/bulk', requireLogin, (req, res) => {
     if (items.length > 5000) return res.status(400).json({ success: false, message: 'A single skip run is limited to 5,000 unmatched logs.' });
     const job = { status: 'running', task: 'missing-logs-bulk', action: 'skip', startedAt: Date.now(), dismissed: false, progress: 0, total: items.length,
         message: `Starting skip for ${items.length} unmatched log(s)...`, result: null };
+    startStandaloneTaskHistory(job, req.user, 'Unmatched Logs — Skip Selected', 'Unmatched Logs bulk skip');
     activeMissingLogJobs.set(req.user.id, job);
     res.json({ success: true, total: items.length, message: `Started skipping ${items.length} unmatched log(s).` });
     setImmediate(() => runMissingLogSkipJob(req.user.id, items, job));
@@ -4231,6 +4765,7 @@ app.post('/api/user/removed-logs/restore', requireLogin, (req, res) => {
     if (trackIds.length > 5000) return res.status(400).json({ success: false, message: 'A single Restore Tracks run is limited to 5,000 tracks.' });
     const job = { status: 'running', task: 'restore-tracks-bulk', progress: 0, total: trackIds.length,
         message: `Starting restore for ${trackIds.length} selected track${trackIds.length === 1 ? '' : 's'}...`, result: null, startedAt: Date.now(), dismissed: false };
+    startStandaloneTaskHistory(job, req.user, 'Restore Tracks — Bulk Restore', 'Restore Tracks bulk restore');
     activeRestoreJobs.set(req.user.id, job);
     const user = { id: req.user.id, username: req.user.username, library_path: req.user.library_path, index_mode: req.user.index_mode || 'standard' };
     res.json({ success: true, total: trackIds.length, message: `Started restoring ${trackIds.length} selected track${trackIds.length === 1 ? '' : 's'}.` });
@@ -4422,8 +4957,8 @@ async function startServer() {
         if (USE_SSL) {
             let sslOptions = null;
             const certDir = path.join(__dirname, 'ssl');
-            const keyPath = process.env.SSL_KEY_PATH || path.join(certDir, 'milo.key');
-            const certPath = process.env.SSL_CERT_PATH || path.join(certDir, 'milo.crt');
+            const keyPath = normalizeFilesystemPath(String(process.env.SSL_KEY_PATH || path.join(certDir, 'milo.key')));
+            const certPath = normalizeFilesystemPath(String(process.env.SSL_CERT_PATH || path.join(certDir, 'milo.crt')));
 
             if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
                 sslOptions = {

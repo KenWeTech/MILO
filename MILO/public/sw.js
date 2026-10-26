@@ -1,7 +1,7 @@
 'use strict';
 
 const CACHE_PREFIX = 'milo-pwa-';
-const CACHE_NAME = `${CACHE_PREFIX}v2`;
+const CACHE_NAME = `${CACHE_PREFIX}v3`;
 const OFFLINE_PAGE = '/offline.html';
 const NAVIGATION_TIMEOUT_MS = 4000;
 const PRECACHE_TIMEOUT_MS = 4000;
@@ -9,6 +9,9 @@ const PRECACHE_ASSETS = [
   OFFLINE_PAGE,
   '/assets/logo.png',
   '/js/login-phrase.js',
+  '/js/catalog.js',
+  '/js/organizer-review.js',
+  '/js/pool-maintenance.js',
   '/manifest.json'
 ];
 
